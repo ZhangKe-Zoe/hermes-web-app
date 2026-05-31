@@ -18,19 +18,10 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      # --- Deploy to Vercel (uncomment and add VERCEL_TOKEN secret) ---
-      # - uses: amondnet/vercel-action@v25
-      #   with:
-      #     vercel-token: ${{ secrets.VERCEL_TOKEN }}
-      #     vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-      #     vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-      #     vercel-args: '--prod'
-
-      # --- Deploy to Netlify (uncomment and add NETLIFY_AUTH_TOKEN secret) ---
-      # - uses: nwtgck/actions-netlify@v3
-      #   with:
-      #     publish-dir: '.next'
-      #     production-deploy: true
-      #   env:
-      #     NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-      #     NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+      # --- Deploy to Vercel ---
+      - uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
