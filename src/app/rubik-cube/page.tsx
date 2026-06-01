@@ -25,6 +25,53 @@ interface LogEntry {
   type: 'info' | 'success' | 'error' | 'warning';
 }
 
+// ── Inline Style Helpers ──
+const S = {
+  page: {
+    minHeight: '100vh',
+    background: 'linear-gradient(135deg, #030712 0%, #0f172a 50%, #030712 100%)',
+    color: '#e2e8f0',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif',
+  } as React.CSSProperties,
+  glass: {
+    background: 'rgba(255,255,255,0.03)',
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+    border: '1px solid rgba(255,255,255,0.06)',
+    borderRadius: '16px',
+  } as React.CSSProperties,
+  card: {
+    background: 'rgba(0,0,0,0.2)',
+    borderRadius: '12px',
+    border: '1px solid rgba(255,255,255,0.04)',
+  } as React.CSSProperties,
+  btn: (active?: boolean) => ({
+    padding: '6px 14px',
+    fontSize: '13px',
+    fontWeight: 600 as const,
+    borderRadius: '8px',
+    border: 'none',
+    cursor: 'pointer' as const,
+    transition: 'all 0.15s',
+    background: active ? '#06b6d4' : 'rgba(255,255,255,0.06)',
+    color: active ? '#fff' : '#94a3b8',
+  }),
+  btnSm: {
+    padding: '4px 10px',
+    fontSize: '11px',
+    fontWeight: 500,
+    borderRadius: '6px',
+    border: '1px solid rgba(255,255,255,0.08)',
+    background: 'rgba(255,255,255,0.04)',
+    color: '#94a3b8',
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+  } as React.CSSProperties,
+  mono: {
+    fontFamily: '"SF Mono", "Fira Code", "Cascadia Code", Menlo, Consolas, monospace',
+  } as React.CSSProperties,
+};
+
 // ── Formula Library ──
 const formulaLibrary: Record<string, Formula[]> = {
   OLL: [
@@ -64,26 +111,58 @@ const formulaLibrary: Record<string, Formula[]> = {
 };
 
 // ── Colors ──
-const FACE_COLORS = {
+const FACE_COLORS: Record<string, string> = {
   U: '#ffffff', D: '#ffd500', F: '#c41e3a',
   B: '#ff5800', L: '#0051ba', R: '#009e60',
-} as const;
+  inner: '#1a1a2e',
+};
+
+// ── QY Cube Bluetooth Protocol ──
+// QY smart cube uses UUID 0000fff0-0000-1000-8000-00805f9b34fb
+// Characteristic 0000fff5-... for state, 0000fff7-... for move notifications
+const QY_SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb';
+const QY_STATE_CHAR = '0000fff5-0000-1000-8000-00805f9b34fb';
+const QY_MOVE_CHAR = '0000fff7-0000-1000-8000-00805f9b34fb';
+
+// Decode move byte from QY cube
+function decodeQYMove(dataView: DataView): string | null {
+  // QY cube move data format:
+  // Byte 0-1: move count
+  // Byte 2: face + direction
+  //   Bits 7-5: face (0=U, 1=R, 2=F, 3=D, 4=L, 5=B)
+  //   Bits 4-0: direction (0x00 = CW 90°, 0x01 = CW 180°, 0x02 = CCW 90°)
+  if (dataView.byteLength < 3) return null;
+
+  const moveByte = dataView.getUint8(2);
+  const faceIdx = (moveByte >> 5) & 0x07;
+  const dir = moveByte & 0x1f;
+
+  const faces = ['U', 'R', 'F', 'D', 'L', 'B'];
+  const face = faces[faceIdx];
+  if (!face) return null;
+
+  if (dir === 0x00) return face;       // CW 90°
+  if (dir === 0x01) return face + '2'; // CW 180°
+  if (dir === 0x02) return face + "'"; // CCW 90°
+  if (dir === 0x03) return face + "'"; // CCW 180° (same as CW 180°)
+  return face; // default
+}
 
 // ── 3D Cube Component ──
 function Cube3D({ rotationX, rotationY }: { rotationX: number; rotationY: number }) {
   const cubies = useMemo(() => {
-    const result: { x: number; y: number; z: number; colors: Record<string, string> }[] = [];
+    const result: { x: number; y: number; z: number; faces: Record<string, string> }[] = [];
     for (let x = -1; x <= 1; x++) {
       for (let y = -1; y <= 1; y++) {
         for (let z = -1; z <= 1; z++) {
-          const colors: Record<string, string> = {};
-          if (y === 1) colors.top = FACE_COLORS.U;
-          if (y === -1) colors.bottom = FACE_COLORS.D;
-          if (z === 1) colors.front = FACE_COLORS.F;
-          if (z === -1) colors.back = FACE_COLORS.B;
-          if (x === 1) colors.right = FACE_COLORS.R;
-          if (x === -1) colors.left = FACE_COLORS.L;
-          result.push({ x, y, z, colors });
+          const faces: Record<string, string> = {};
+          if (y === 1) faces.top = FACE_COLORS.U;
+          if (y === -1) faces.bottom = FACE_COLORS.D;
+          if (z === 1) faces.front = FACE_COLORS.F;
+          if (z === -1) faces.back = FACE_COLORS.B;
+          if (x === 1) faces.right = FACE_COLORS.R;
+          if (x === -1) faces.left = FACE_COLORS.L;
+          result.push({ x, y, z, faces });
         }
       }
     }
@@ -91,51 +170,35 @@ function Cube3D({ rotationX, rotationY }: { rotationX: number; rotationY: number
   }, []);
 
   return (
-    <div className="cube-scene" style={{ perspective: '600px', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div
-        className="cube-container"
-        style={{
-          width: '120px',
-          height: '120px',
-          position: 'relative',
-          transformStyle: 'preserve-3d',
-          transform: `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`,
-          transition: 'transform 0.1s ease-out',
-        }}
-      >
-        {cubies.map(({ x, y, z, colors }, i) => (
-          <div
-            key={i}
-            style={{
-              position: 'absolute',
-              width: '36px',
-              height: '36px',
-              transformStyle: 'preserve-3d',
-              transform: `translate3d(${x * 38 + 42}px, ${-y * 38 + 42}px, ${z * 38}px)`,
-            }}
-          >
-            {/* Each face of the cubie */}
-            {Object.entries({
-              top: { transform: 'rotateX(90deg) translateZ(18px)', color: colors.top },
-              bottom: { transform: 'rotateX(-90deg) translateZ(18px)', color: colors.bottom },
-              front: { transform: 'translateZ(18px)', color: colors.front },
-              back: { transform: 'rotateY(180deg) translateZ(18px)', color: colors.back },
-              right: { transform: 'rotateY(90deg) translateZ(18px)', color: colors.right },
-              left: { transform: 'rotateY(-90deg) translateZ(18px)', color: colors.left },
-            }).map(([face, { transform, color }]) => (
-              <div
-                key={face}
-                style={{
-                  position: 'absolute',
-                  width: '36px',
-                  height: '36px',
-                  transform,
-                  background: color || '#1a1a2e',
-                  border: '1.5px solid #0a0a1a',
-                  borderRadius: '3px',
-                  boxSizing: 'border-box',
-                }}
-              />
+    <div style={{ perspective: '600px', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{
+        width: '120px', height: '120px', position: 'relative',
+        transformStyle: 'preserve-3d',
+        transform: `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`,
+        transition: 'transform 0.1s ease-out',
+      }}>
+        {cubies.map(({ x, y, z, faces }, i) => (
+          <div key={i} style={{
+            position: 'absolute', width: '36px', height: '36px',
+            transformStyle: 'preserve-3d',
+            transform: `translate3d(${x * 38 + 42}px, ${-y * 38 + 42}px, ${z * 38}px)`,
+          }}>
+            {([
+              ['top', 'rotateX(90deg) translateZ(18px)'],
+              ['bottom', 'rotateX(-90deg) translateZ(18px)'],
+              ['front', 'translateZ(18px)'],
+              ['back', 'rotateY(180deg) translateZ(18px)'],
+              ['right', 'rotateY(90deg) translateZ(18px)'],
+              ['left', 'rotateY(-90deg) translateZ(18px)'],
+            ] as [string, string][]).map(([face, tf]) => (
+              <div key={face} style={{
+                position: 'absolute', width: '36px', height: '36px',
+                transform: tf,
+                background: faces[face] || FACE_COLORS.inner,
+                border: '1.5px solid #0a0a1a',
+                borderRadius: '3px',
+                boxSizing: 'border-box',
+              }} />
             ))}
           </div>
         ))}
@@ -144,19 +207,19 @@ function Cube3D({ rotationX, rotationY }: { rotationX: number; rotationY: number
   );
 }
 
-// ── Safari Detection ──
-function detectBrowser() {
-  if (typeof window === 'undefined') return { isSafari: false, supportsBluetooth: false };
-  const ua = navigator.userAgent;
-  const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
-  const supportsBluetooth = 'bluetooth' in navigator;
-  return { isSafari, supportsBluetooth };
+// ── Difficulty Meta ──
+function diffMeta(d?: string) {
+  switch (d) {
+    case 'beginner': return { label: '初级', color: '#4ade80', bg: 'rgba(74,222,128,0.15)' };
+    case 'intermediate': return { label: '中级', color: '#facc15', bg: 'rgba(250,204,21,0.15)' };
+    case 'advanced': return { label: '高级', color: '#f87171', bg: 'rgba(248,113,113,0.15)' };
+    default: return { label: '全部', color: '#94a3b8', bg: 'rgba(148,163,184,0.1)' };
+  }
 }
 
 // ── Main Component ──
 export default function RubikCubeTrainer() {
-  // State
-  const [currentCategory, setCurrentCategory] = useState<string>('OLL');
+  const [currentCategory, setCurrentCategory] = useState('OLL');
   const [currentFormula, setCurrentFormula] = useState<Formula | null>(null);
   const [isPracticing, setIsPracticing] = useState(false);
   const [userMoves, setUserMoves] = useState<string[]>([]);
@@ -167,54 +230,80 @@ export default function RubikCubeTrainer() {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('未连接');
   const [isConnecting, setIsConnecting] = useState(false);
-  const [cubeRotationX, setCubeRotationX] = useState(-25);
-  const [cubeRotationY, setCubeRotationY] = useState(35);
-  const [browserInfo, setBrowserInfo] = useState({ isSafari: false, supportsBluetooth: false });
-  const [difficulty, setDifficulty] = useState<string>('all');
+  const [cubeRotX, setCubeRotX] = useState(-25);
+  const [cubeRotY, setCubeRotY] = useState(35);
+  const [difficulty, setDifficulty] = useState('all');
   const [highlightedStep, setHighlightedStep] = useState(-1);
+  const [lastMove, setLastMove] = useState<string | null>(null);
 
   const startTimeRef = useRef<number | null>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const logIdRef = useRef(0);
   const isDragging = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const moveCharRef = useRef<any>(null);
 
-  // Detect browser
-  useEffect(() => {
-    setBrowserInfo(detectBrowser());
-  }, []);
-
-  // Add log
   const addLog = useCallback((message: string, type: LogEntry['type'] = 'info') => {
     logIdRef.current++;
     setLogs(prev => [{ id: logIdRef.current, time: new Date().toLocaleTimeString(), message, type }, ...prev].slice(0, 50));
   }, []);
 
-  // Filter formulas
   const formulas = useMemo(() => {
     const list = formulaLibrary[currentCategory] || [];
-    if (difficulty === 'all') return list;
-    return list.filter(f => f.difficulty === difficulty);
+    return difficulty === 'all' ? list : list.filter(f => f.difficulty === difficulty);
   }, [currentCategory, difficulty]);
+
+  // Handle cube move (from Bluetooth or manual)
+  const handleCubeMove = useCallback((move: string) => {
+    setLastMove(move);
+    addLog(`魔方: ${move}`, 'info');
+
+    // Auto-check against practice formula
+    if (currentFormula && isPracticing) {
+      const expectedMoves = currentFormula.formula.split(' ');
+      const idx = userMoves.length;
+      if (idx < expectedMoves.length) {
+        const expected = expectedMoves[idx].replace(/\s+/g, '').toUpperCase();
+        const actual = move.replace(/\s+/g, '').toUpperCase();
+        if (actual === expected) {
+          setStats(prev => {
+            const ns = prev.streak + 1;
+            return { correct: prev.correct + 1, wrong: prev.wrong, streak: ns, bestStreak: Math.max(prev.bestStreak, ns) };
+          });
+          addLog(`✅ 步骤${idx + 1}: ${move}`, 'success');
+          setHighlightedStep(idx + 1);
+        } else {
+          setStats(prev => ({ ...prev, wrong: prev.wrong + 1, streak: 0 }));
+          setWrongMoves(prev => new Set(prev).add(idx));
+          addLog(`❌ 步骤${idx + 1}: 期望 ${expectedMoves[idx]}，实际 ${move}`, 'error');
+        }
+        setUserMoves(prev => [...prev, move]);
+        if (idx + 1 === expectedMoves.length && actual === expected) {
+          const t = ((Date.now() - (startTimeRef.current || Date.now())) / 1000).toFixed(1);
+          addLog(`🎉 完美完成！用时 ${t} 秒`, 'success');
+          setIsPracticing(false);
+          if (timerRef.current) clearInterval(timerRef.current);
+        }
+      }
+    }
+  }, [currentFormula, isPracticing, userMoves, addLog]);
 
   // Select formula
   const selectFormula = useCallback((id: string) => {
-    const formula = formulas.find(f => f.id === id);
-    if (formula) {
-      setCurrentFormula(formula);
+    const f = formulas.find(x => x.id === id);
+    if (f) {
+      setCurrentFormula(f);
       setUserMoves([]);
       setWrongMoves(new Set());
       setHighlightedStep(-1);
-      addLog(`已选择: ${formula.id} ${formula.name}`, 'info');
+      addLog(`已选择: ${f.id} ${f.name}`, 'info');
     }
   }, [formulas, addLog]);
 
   // Start practice
   const startPractice = useCallback(() => {
-    if (!currentFormula) {
-      addLog('请先选择一个公式', 'error');
-      return;
-    }
+    if (!currentFormula) { addLog('请先选择一个公式', 'error'); return; }
     setIsPracticing(true);
     setUserMoves([]);
     setWrongMoves(new Set());
@@ -224,45 +313,9 @@ export default function RubikCubeTrainer() {
     startTimeRef.current = Date.now();
     addLog(`开始练习: ${currentFormula.id}`, 'success');
     timerRef.current = setInterval(() => {
-      if (startTimeRef.current) {
-        setElapsedTime(parseFloat(((Date.now() - startTimeRef.current) / 1000).toFixed(1)));
-      }
+      if (startTimeRef.current) setElapsedTime(parseFloat(((Date.now() - startTimeRef.current) / 1000).toFixed(1)));
     }, 100);
   }, [currentFormula, addLog]);
-
-  // Check move
-  const checkUserMove = useCallback((move: string) => {
-    if (!currentFormula || !isPracticing) return;
-    const expectedMoves = currentFormula.formula.split(' ');
-    const idx = userMoves.length;
-    if (idx >= expectedMoves.length) return;
-
-    const expected = expectedMoves[idx].replace(/\s+/g, '').toUpperCase();
-    const actual = move.replace(/\s+/g, '').toUpperCase();
-    const isCorrect = actual === expected;
-
-    if (isCorrect) {
-      setStats(prev => {
-        const newStreak = prev.streak + 1;
-        return { correct: prev.correct + 1, wrong: prev.wrong, streak: newStreak, bestStreak: Math.max(prev.bestStreak, newStreak) };
-      });
-      addLog(`✅ 步骤${idx + 1}: ${move}`, 'success');
-      setHighlightedStep(idx + 1);
-    } else {
-      setStats(prev => ({ ...prev, wrong: prev.wrong + 1, streak: 0 }));
-      setWrongMoves(prev => new Set(prev).add(idx));
-      addLog(`❌ 步骤${idx + 1}: 期望 ${expectedMoves[idx]}，实际 ${move}`, 'error');
-    }
-
-    setUserMoves(prev => [...prev, move]);
-
-    if (idx + 1 === expectedMoves.length && isCorrect) {
-      const time = ((Date.now() - (startTimeRef.current || Date.now())) / 1000).toFixed(1);
-      addLog(`🎉 完美完成！用时 ${time} 秒`, 'success');
-      setIsPracticing(false);
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-  }, [currentFormula, isPracticing, userMoves, addLog]);
 
   // Reset
   const resetPractice = useCallback(() => {
@@ -277,45 +330,98 @@ export default function RubikCubeTrainer() {
     addLog('练习已重置', 'info');
   }, [addLog]);
 
-  // Connect cube
+  // Bluetooth connect with real data parsing
   const connectCube = useCallback(async () => {
     if (isConnecting) return;
     setIsConnecting(true);
-    addLog('正在搜索奇艺智能魔方...', 'info');
 
-    if (!browserInfo.supportsBluetooth) {
-      if (browserInfo.isSafari) {
-        addLog('Safari 不支持 Web Bluetooth，请使用 Chrome/Edge 浏览器', 'error');
+    // Browser detection
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+    const hasBluetooth = typeof navigator !== 'undefined' && 'bluetooth' in navigator;
+
+    if (!hasBluetooth) {
+      if (isSafari) {
+        addLog('⚠️ Safari 不支持 Web Bluetooth，请使用 Chrome/Edge 浏览器', 'error');
       } else {
-        addLog('当前浏览器不支持 Web Bluetooth，请使用 Chrome 56+', 'error');
+        addLog('⚠️ 当前浏览器不支持 Web Bluetooth，请使用 Chrome 56+', 'error');
       }
       setIsConnecting(false);
       return;
     }
 
+    addLog('搜索智能魔方...', 'info');
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const bluetooth = (navigator as unknown as { bluetooth: { requestDevice: (options: Record<string, unknown>) => Promise<{ name: string }> } }).bluetooth;
-      const device = await bluetooth.requestDevice({
+      const bt = (navigator as unknown as { bluetooth: { requestDevice: (opts: Record<string, unknown>) => Promise<any> } }).bluetooth;
+      const device = await bt.requestDevice({
         filters: [
           { namePrefix: 'QY' },
           { namePrefix: 'Qiyi' },
           { namePrefix: 'Giiker' },
           { namePrefix: 'Mi Smart' },
         ],
-        optionalServices: ['0000fff0-0000-1000-8000-00805f9b34fb'],
+        optionalServices: [QY_SERVICE_UUID],
       });
-      addLog(`找到设备: ${device.name}`, 'success');
-      setIsConnected(true);
-      setConnectionStatus(`已连接: ${device.name}`);
-      addLog('✅ 魔方连接成功！', 'success');
 
-      // TODO: Set up GATT characteristic notifications for real-time cube state
-      // const server = await device.gatt.connect();
-      // const service = await server.getPrimaryService('0000fff0-0000-1000-8000-00805f9b34fb');
-      // const characteristic = await service.getCharacteristic('0000fff6-0000-1000-8000-00805f9b34fb');
-      // characteristic.addEventListener('characteristicvaluechanged', handleCubeData);
-      // await characteristic.startNotifications();
+      addLog(`找到设备: ${device.name || 'Unknown'}`, 'success');
+
+      // Connect GATT
+      const server = await device.gatt!.connect();
+      addLog('GATT 连接成功', 'info');
+
+      // Get service and characteristics
+      const service = await server.getPrimaryService(QY_SERVICE_UUID);
+      addLog('获取服务成功', 'info');
+
+      // Try to get move notification characteristic
+      try {
+        const moveChar = await service.getCharacteristic(QY_MOVE_CHAR);
+        moveCharRef.current = moveChar;
+
+        // Listen for move notifications
+        moveChar.addEventListener('characteristicvaluechanged', ((event: Event) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const char = event.target as any;
+          if (char.value) {
+            const move = decodeQYMove(char.value);
+            if (move) handleCubeMove(move);
+          }
+        }) as EventListener);
+
+        await moveChar.startNotifications();
+        addLog('✅ 已订阅魔方旋转数据', 'success');
+      } catch {
+        // Fallback: try state characteristic
+        try {
+          const stateChar = await service.getCharacteristic(QY_STATE_CHAR);
+          stateChar.addEventListener('characteristicvaluechanged', ((event: Event) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const char = event.target as any;
+            if (char.value) {
+              // State data contains cube state, log it
+              addLog(`收到魔方状态 (${char.value.byteLength} bytes)`, 'info');
+            }
+          }) as EventListener);
+          await stateChar.startNotifications();
+          addLog('✅ 已订阅魔方状态数据', 'success');
+        } catch {
+          addLog('⚠️ 无法订阅旋转通知，但已连接', 'warning');
+        }
+      }
+
+      setIsConnected(true);
+      setConnectionStatus(`已连接: ${device.name || 'QY Cube'}`);
+      addLog('✅ 魔方连接成功！转动魔方试试', 'success');
+
+      // Handle disconnect
+      device.addEventListener('gattserverdisconnected', () => {
+        setIsConnected(false);
+        setConnectionStatus('已断开');
+        moveCharRef.current = null;
+        addLog('魔方已断开连接', 'warning');
+      });
+
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : '未知错误';
       if (msg.includes('cancelled') || msg.includes('User cancelled')) {
@@ -326,337 +432,251 @@ export default function RubikCubeTrainer() {
     } finally {
       setIsConnecting(false);
     }
-  }, [isConnecting, addLog, browserInfo]);
+  }, [isConnecting, addLog, handleCubeMove]);
 
   // Cleanup
   useEffect(() => {
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (moveCharRef.current) {
+        moveCharRef.current.stopNotifications().catch(() => {});
+      }
+    };
   }, []);
 
-  // Progress
-  const progress = currentFormula ? (userMoves.length / currentFormula.formula.split(' ').length) * 100 : 0;
-
-  // Mouse drag for 3D rotation
+  // Mouse drag for 3D
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     isDragging.current = true;
     lastMouse.current = { x: e.clientX, y: e.clientY };
   }, []);
-
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!isDragging.current) return;
-    const dx = e.clientX - lastMouse.current.x;
-    const dy = e.clientY - lastMouse.current.y;
-    setCubeRotationY(prev => prev + dx * 0.5);
-    setCubeRotationX(prev => prev - dy * 0.5);
+    setCubeRotY(prev => prev + (e.clientX - lastMouse.current.x) * 0.5);
+    setCubeRotX(prev => prev - (e.clientY - lastMouse.current.y) * 0.5);
     lastMouse.current = { x: e.clientX, y: e.clientY };
   }, []);
-
   const handleMouseUp = useCallback(() => { isDragging.current = false; }, []);
 
-  // Difficulty label & color
-  const diffMeta = (d?: string) => {
-    switch (d) {
-      case 'beginner': return { label: '初级', cls: 'bg-green-500/20 text-green-400 border-green-500/30' };
-      case 'intermediate': return { label: '中级', cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' };
-      case 'advanced': return { label: '高级', cls: 'bg-red-500/20 text-red-400 border-red-500/30' };
-      default: return { label: '全部', cls: '' };
-    }
-  };
+  const progress = currentFormula ? (userMoves.length / currentFormula.formula.split(' ').length) * 100 : 0;
+
+  // Manual move buttons
+  const allMoves = ["U", "U'", "U2", "D", "D'", "D2", "R", "R'", "R2", "L", "L'", "L2", "F", "F'", "F2", "B", "B'", "B2"];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-950 via-slate-900 to-gray-950 text-white">
-      {/* Safari Warning Banner */}
-      {browserInfo.isSafari && !browserInfo.supportsBluetooth && (
-        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-3 text-center">
-          <p className="text-amber-300 text-sm">
-            ⚠️ <strong>Safari 不支持蓝牙连接</strong> — 请使用 <strong>Chrome</strong> 或 <strong>Edge</strong> 浏览器连接智能魔方。
-            你仍然可以使用手动模式练习公式。
-          </p>
-        </div>
-      )}
+    <div style={S.page}>
+      {/* Safari Warning */}
+      {(() => {
+        const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+        const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+        const hasBT = typeof navigator !== 'undefined' && 'bluetooth' in navigator;
+        if (isSafari && !hasBT) {
+          return (
+            <div style={{ background: 'rgba(245,158,11,0.1)', borderBottom: '1px solid rgba(245,158,11,0.2)', padding: '10px 16px', textAlign: 'center', fontSize: '13px', color: '#fbbf24' }}>
+              ⚠️ <strong>Safari 不支持蓝牙连接</strong> — 请使用 <strong>Chrome</strong> 或 <strong>Edge</strong> 浏览器。你仍可使用手动模式练习公式。
+            </div>
+          );
+        }
+        return null;
+      })()}
 
       {/* Header */}
-      <header className="py-6 px-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+      <header style={{ padding: '20px 24px 12px' }}>
+        <div style={{ maxWidth: '1400px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
+            <h1 style={{ fontSize: '26px', fontWeight: 700, margin: 0, background: 'linear-gradient(135deg, #22d3ee, #3b82f6, #a855f7)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
               🎲 魔方速拧公式训练
             </h1>
-            <p className="text-gray-500 text-sm mt-1">CFOP · OLL · PLL · F2L 交互式学习系统</p>
+            <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>CFOP · OLL · PLL · F2L 交互式学习系统</p>
           </div>
-          <div className="flex items-center gap-3">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs ${isConnected ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-white/5 text-gray-400 border border-white/10'}`}>
-              <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {lastMove && (
+              <div style={{ ...S.mono, fontSize: '20px', fontWeight: 700, color: '#22d3ee', padding: '4px 12px', background: 'rgba(34,211,238,0.1)', borderRadius: '8px', border: '1px solid rgba(34,211,238,0.2)' }}>
+                {lastMove}
+              </div>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '20px', fontSize: '12px', background: isConnected ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.04)', border: `1px solid ${isConnected ? 'rgba(74,222,128,0.3)' : 'rgba(255,255,255,0.08)'}`, color: isConnected ? '#4ade80' : '#64748b' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: isConnected ? '#4ade80' : '#475569', animation: isConnected ? 'pulse 2s infinite' : 'none' }} />
               {connectionStatus}
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 pb-8 grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* ── Left: Formula Library ── */}
-        <div className="lg:col-span-3 bg-white/[0.03] backdrop-blur-xl rounded-2xl border border-white/[0.06] overflow-hidden">
-          <div className="p-5 border-b border-white/[0.06]">
-            <h2 className="text-lg font-semibold flex items-center gap-2">📚 公式库</h2>
-          </div>
+      {/* Main Grid */}
+      <main style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 24px 24px', display: 'grid', gridTemplateColumns: '280px 1fr 360px', gap: '16px' }}>
 
-          {/* Category Tabs */}
-          <div className="flex gap-1 p-3 border-b border-white/[0.06]">
+        {/* ── Left: Formula Library ── */}
+        <div style={{ ...S.glass, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <h2 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>📚 公式库</h2>
+          </div>
+          <div style={{ display: 'flex', gap: '4px', padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             {Object.keys(formulaLibrary).map(cat => (
-              <button
-                key={cat}
-                onClick={() => { setCurrentCategory(cat); setCurrentFormula(null); setUserMoves([]); }}
-                className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-                  currentCategory === cat ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/20' : 'text-gray-400 hover:text-white hover:bg-white/[0.06]'
-                }`}
-              >
-                {cat}
+              <button key={cat} onClick={() => { setCurrentCategory(cat); setCurrentFormula(null); setUserMoves([]); }} style={S.btn(currentCategory === cat)}>{cat}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '4px', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            {['all', 'beginner', 'intermediate', 'advanced'].map(d => (
+              <button key={d} onClick={() => setDifficulty(d)} style={{ ...S.btnSm, background: difficulty === d ? 'rgba(255,255,255,0.1)' : 'transparent', color: difficulty === d ? '#e2e8f0' : '#64748b' }}>
+                {d === 'all' ? '全部' : diffMeta(d).label}
               </button>
             ))}
           </div>
-
-          {/* Difficulty Filter */}
-          <div className="flex gap-1 px-3 py-2 border-b border-white/[0.06]">
-            {['all', 'beginner', 'intermediate', 'advanced'].map(d => {
-              const meta = diffMeta(d === 'all' ? undefined : d);
-              return (
-                <button
-                  key={d}
-                  onClick={() => setDifficulty(d)}
-                  className={`px-2.5 py-1 text-xs rounded-md transition-all ${
-                    difficulty === d ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-gray-300'
-                  }`}
-                >
-                  {d === 'all' ? '全部' : meta.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Formula List */}
-          <div className="p-2 space-y-1 max-h-[calc(100vh-320px)] overflow-y-auto">
+          <div style={{ flex: 1, overflow: 'auto', padding: '6px 8px' }}>
             {formulas.map(f => {
-              const meta = diffMeta(f.difficulty);
+              const dm = diffMeta(f.difficulty);
               return (
-                <div
-                  key={f.id}
-                  onClick={() => selectFormula(f.id)}
-                  className={`p-3 rounded-xl cursor-pointer transition-all border ${
-                    currentFormula?.id === f.id
-                      ? 'bg-cyan-500/10 border-cyan-500/30 shadow-lg shadow-cyan-500/5'
-                      : 'border-transparent hover:bg-white/[0.04] hover:border-white/[0.06]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-cyan-400">{f.id}</span>
-                    {f.difficulty && (
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${meta.cls}`}>
-                        {meta.label}
-                      </span>
-                    )}
+                <div key={f.id} onClick={() => selectFormula(f.id)} style={{
+                  padding: '10px 12px', marginBottom: '2px', borderRadius: '10px', cursor: 'pointer', transition: 'all 0.15s',
+                  background: currentFormula?.id === f.id ? 'rgba(6,182,212,0.1)' : 'transparent',
+                  border: currentFormula?.id === f.id ? '1px solid rgba(6,182,212,0.3)' : '1px solid transparent',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#22d3ee' }}>{f.id}</span>
+                    {f.difficulty && <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: dm.bg, color: dm.color }}>{dm.label}</span>}
                   </div>
-                  <div className="font-mono text-sm text-amber-300 leading-relaxed">{f.formula}</div>
-                  <div className="text-xs text-gray-500 mt-1">{f.name} · {f.description}</div>
+                  <div style={{ ...S.mono, fontSize: '13px', color: '#fbbf24', lineHeight: 1.6 }}>{f.formula}</div>
+                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>{f.name} · {f.description}</div>
                 </div>
               );
             })}
-            {formulas.length === 0 && (
-              <div className="text-center text-gray-500 py-8 text-sm">该难度暂无公式</div>
-            )}
+            {formulas.length === 0 && <div style={{ textAlign: 'center', color: '#475569', padding: '32px 0', fontSize: '13px' }}>该难度暂无公式</div>}
           </div>
         </div>
 
-        {/* ── Center: 3D Visualization ── */}
-        <div className="lg:col-span-5 space-y-5">
+        {/* ── Center: 3D + Manual Input ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {/* 3D Cube */}
-          <div className="bg-white/[0.03] backdrop-blur-xl rounded-2xl border border-white/[0.06] overflow-hidden">
-            <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
-              <h2 className="text-sm font-medium text-gray-300">3D 魔方预览</h2>
-              <div className="flex gap-1">
+          <div style={S.glass}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '13px', color: '#94a3b8' }}>3D 魔方预览</span>
+              <div style={{ display: 'flex', gap: '4px' }}>
                 {['U', 'D', 'R', 'L', 'F', 'B'].map(face => (
-                  <button
-                    key={face}
-                    onClick={() => {
-                      // Animate rotation on click
-                      const angles: Record<string, [number, number]> = {
-                        U: [0, 90], D: [0, -90], R: [90, 0], L: [-90, 0], F: [0, 0], B: [180, 0],
-                      };
-                      const [dx, dy] = angles[face];
-                      setCubeRotationX(prev => prev + dx * 0.3);
-                      setCubeRotationY(prev => prev + dy * 0.3);
-                    }}
-                    className="w-7 h-7 text-xs font-mono bg-white/[0.06] hover:bg-cyan-500/20 hover:text-cyan-400 rounded-md transition-all"
-                  >
-                    {face}
-                  </button>
+                  <button key={face} onClick={() => {
+                    const m: Record<string, [number, number]> = { U: [0, 90], D: [0, -90], R: [90, 0], L: [-90, 0], F: [0, 0], B: [180, 0] };
+                    const [dx, dy] = m[face];
+                    setCubeRotX(p => p + dx * 0.3);
+                    setCubeRotY(p => p + dy * 0.3);
+                  }} style={{ ...S.btnSm, width: '28px', height: '28px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', ...S.mono }}>{face}</button>
                 ))}
               </div>
             </div>
-            <div
-              className="h-[320px] select-none cursor-grab active:cursor-grabbing"
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-            >
-              <Cube3D rotationX={cubeRotationX} rotationY={cubeRotationY} />
+            <div style={{ height: '300px', cursor: 'grab', userSelect: 'none' }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+              <Cube3D rotationX={cubeRotX} rotationY={cubeRotY} />
             </div>
-            <div className="px-4 pb-3 text-center">
-              <p className="text-[11px] text-gray-600">拖拽旋转 · 点击面按钮快速切换视角</p>
+            <div style={{ padding: '0 16px 8px', textAlign: 'center' }}>
+              <p style={{ fontSize: '11px', color: '#334155', margin: 0 }}>拖拽旋转 · 点击面按钮快速切换视角</p>
             </div>
           </div>
 
-          {/* Quick Practice Panel */}
-          <div className="bg-white/[0.03] backdrop-blur-xl rounded-2xl border border-white/[0.06] p-5">
-            <h3 className="text-sm font-medium text-gray-300 mb-3">🎮 手动录入旋转</h3>
-            <p className="text-xs text-gray-500 mb-3">
-              {browserInfo.isSafari
-                ? 'Safari 不支持蓝牙，请手动点击按钮录入每一步操作'
-                : '未连接魔方时，可手动点击按钮录入操作'}
+          {/* Manual Input */}
+          <div style={{ ...S.glass, padding: '16px' }}>
+            <h3 style={{ fontSize: '13px', fontWeight: 600, color: '#94a3b8', margin: '0 0 8px' }}>🎮 手动录入旋转</h3>
+            <p style={{ fontSize: '11px', color: '#475569', margin: '0 0 12px' }}>
+              {isConnected ? '蓝牙已连接，转动魔方自动录入。也可手动点击：' : '未连接魔方，手动点击按钮录入操作：'}
             </p>
-            <div className="grid grid-cols-6 gap-2">
-              {["U", "U'", "U2", "D", "D'", "D2", "R", "R'", "R2", "L", "L'", "L2", "F", "F'", "F2", "B", "B'", "B2"].map(move => (
-                <button
-                  key={move}
-                  onClick={() => checkUserMove(move)}
-                  disabled={!isPracticing}
-                  className="py-2.5 text-sm font-mono bg-white/[0.06] hover:bg-cyan-500/20 hover:text-cyan-400 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg transition-all active:scale-95"
-                >
-                  {move}
-                </button>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '6px' }}>
+              {allMoves.map(move => (
+                <button key={move} onClick={() => handleCubeMove(move)} disabled={!isPracticing && !isConnected}
+                  style={{ ...S.mono, padding: '10px 0', fontSize: '13px', fontWeight: 600, borderRadius: '8px', border: 'none', cursor: (!isPracticing && !isConnected) ? 'not-allowed' : 'pointer', opacity: (!isPracticing && !isConnected) ? 0.3 : 1, background: 'rgba(255,255,255,0.06)', color: '#e2e8f0', transition: 'all 0.1s' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(6,182,212,0.2)'; (e.currentTarget as HTMLButtonElement).style.color = '#22d3ee'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#e2e8f0'; }}
+                >{move}</button>
               ))}
             </div>
           </div>
         </div>
 
-        {/* ── Right: Practice Panel ── */}
-        <div className="lg:col-span-4 space-y-5">
-          {/* Connection */}
-          <div className="bg-white/[0.03] backdrop-blur-xl rounded-2xl border border-white/[0.06] p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className={`w-2.5 h-2.5 rounded-full ${isConnected ? 'bg-green-400 animate-pulse' : isConnecting ? 'bg-amber-400 animate-pulse' : 'bg-gray-600'}`} />
-                <span className="text-sm text-gray-300">{connectionStatus}</span>
-              </div>
-              <button
-                onClick={connectCube}
-                disabled={isConnecting || (browserInfo.isSafari && !browserInfo.supportsBluetooth)}
-                className="px-4 py-2 text-sm font-medium bg-gradient-to-r from-cyan-500 to-blue-500 rounded-lg hover:shadow-lg hover:shadow-cyan-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                {isConnecting ? '搜索中...' : isConnected ? '已连接' : '🔗 连接魔方'}
-              </button>
+        {/* ── Right: Practice ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Connect Button */}
+          <div style={{ ...S.glass, padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: isConnected ? '#4ade80' : isConnecting ? '#fbbf24' : '#475569', animation: (isConnected || isConnecting) ? 'pulse 2s infinite' : 'none' }} />
+              <span style={{ fontSize: '13px', color: '#94a3b8' }}>{connectionStatus}</span>
             </div>
+            <button onClick={connectCube} disabled={isConnecting} style={{ padding: '8px 20px', fontSize: '13px', fontWeight: 600, borderRadius: '10px', border: 'none', cursor: isConnecting ? 'wait' : 'pointer', background: isConnecting ? 'rgba(107,114,128,0.3)' : 'linear-gradient(135deg, #06b6d4, #3b82f6)', color: '#fff', transition: 'all 0.15s' }}>
+              {isConnecting ? '搜索中...' : isConnected ? '已连接' : '🔗 连接魔方'}
+            </button>
           </div>
 
-          {/* Current Formula & Steps */}
-          <div className="bg-white/[0.03] backdrop-blur-xl rounded-2xl border border-white/[0.06] p-5">
-            <h2 className="text-lg font-semibold mb-4">🎯 练习模式</h2>
-
+          {/* Current Formula */}
+          <div style={{ ...S.glass, padding: '20px' }}>
+            <h2 style={{ fontSize: '16px', fontWeight: 600, margin: '0 0 16px' }}>🎯 练习模式</h2>
             {currentFormula ? (
               <>
-                <div className="mb-4 p-4 bg-black/20 rounded-xl border border-white/[0.04]">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-cyan-400">{currentFormula.id}: {currentFormula.name}</span>
-                    {currentFormula.difficulty && (
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full border ${diffMeta(currentFormula.difficulty).cls}`}>
-                        {diffMeta(currentFormula.difficulty).label}
-                      </span>
-                    )}
+                <div style={{ ...S.card, padding: '14px', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#22d3ee' }}>{currentFormula.id}: {currentFormula.name}</span>
+                    {currentFormula.difficulty && (() => { const dm = diffMeta(currentFormula.difficulty); return <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '10px', background: dm.bg, color: dm.color }}>{dm.label}</span>; })()}
                   </div>
-                  <div className="font-mono text-xl text-amber-300 tracking-wider">{currentFormula.formula}</div>
-                  <div className="text-xs text-gray-500 mt-2">{currentFormula.description}</div>
+                  <div style={{ ...S.mono, fontSize: '18px', color: '#fbbf24', letterSpacing: '1.5px', lineHeight: 1.8 }}>{currentFormula.formula}</div>
+                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '6px' }}>{currentFormula.description}</div>
                 </div>
 
-                {/* Step indicators */}
-                <div className="flex flex-wrap gap-1.5 mb-4">
+                {/* Steps */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '14px' }}>
                   {currentFormula.formula.split(' ').map((move, i) => {
                     const isDone = i < userMoves.length;
                     const isWrong = wrongMoves.has(i);
                     const isCurrent = i === highlightedStep && isPracticing;
                     return (
-                      <span
-                        key={i}
-                        className={`inline-flex items-center justify-center w-10 h-10 text-sm font-mono font-bold rounded-lg transition-all duration-200 ${
-                          isCurrent
-                            ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/30 scale-110'
-                            : isDone && !isWrong
-                            ? 'bg-green-500/80 text-white'
-                            : isWrong
-                            ? 'bg-red-500/80 text-white'
-                            : 'bg-white/[0.06] text-gray-400'
-                        }`}
-                      >
+                      <span key={i} style={{ ...S.mono, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px', fontSize: '13px', fontWeight: 700, borderRadius: '8px', transition: 'all 0.2s', background: isCurrent ? '#06b6d4' : isDone && !isWrong ? 'rgba(74,222,128,0.7)' : isWrong ? 'rgba(248,113,113,0.7)' : 'rgba(255,255,255,0.06)', color: isCurrent ? '#fff' : isDone ? '#fff' : '#94a3b8', boxShadow: isCurrent ? '0 0 12px rgba(6,182,212,0.4)' : 'none', transform: isCurrent ? 'scale(1.1)' : 'scale(1)' }}>
                         {move}
                       </span>
                     );
                   })}
                 </div>
 
-                {/* Progress bar */}
-                <div className="w-full h-1.5 bg-white/[0.06] rounded-full mb-4 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-cyan-500 to-green-400 rounded-full transition-all duration-300"
-                    style={{ width: `${progress}%` }}
-                  />
+                {/* Progress */}
+                <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', marginBottom: '16px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', background: 'linear-gradient(90deg, #06b6d4, #4ade80)', borderRadius: '3px', transition: 'width 0.3s', width: `${progress}%` }} />
                 </div>
               </>
             ) : (
-              <div className="text-center py-8 text-gray-500">
-                <div className="text-4xl mb-2">👆</div>
-                <p className="text-sm">在左侧选择一个公式开始练习</p>
+              <div style={{ textAlign: 'center', padding: '40px 0', color: '#475569' }}>
+                <div style={{ fontSize: '36px', marginBottom: '8px' }}>👆</div>
+                <p style={{ fontSize: '13px', margin: 0 }}>在左侧选择一个公式开始练习</p>
               </div>
             )}
 
-            {/* Action buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={startPractice}
-                disabled={!currentFormula || isPracticing}
-                className="flex-1 py-3 text-sm font-semibold bg-gradient-to-r from-cyan-500 to-blue-500 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-cyan-500/20 transition-all active:scale-[0.98]"
-              >
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={startPractice} disabled={!currentFormula || isPracticing} style={{ flex: 1, padding: '12px', fontSize: '14px', fontWeight: 600, borderRadius: '12px', border: 'none', cursor: (!currentFormula || isPracticing) ? 'not-allowed' : 'pointer', opacity: (!currentFormula || isPracticing) ? 0.4 : 1, background: 'linear-gradient(135deg, #06b6d4, #3b82f6)', color: '#fff', transition: 'all 0.15s' }}>
                 {isPracticing ? '练习中...' : '▶ 开始练习'}
               </button>
-              <button
-                onClick={resetPractice}
-                className="px-6 py-3 text-sm font-semibold bg-white/[0.06] hover:bg-white/[0.1] rounded-xl transition-all active:scale-[0.98]"
-              >
+              <button onClick={resetPractice} style={{ padding: '12px 20px', fontSize: '14px', fontWeight: 600, borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: '#94a3b8', cursor: 'pointer', transition: 'all 0.15s' }}>
                 ↺ 重置
               </button>
             </div>
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-4 gap-3">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
             {[
-              { label: '正确', value: stats.correct, color: 'text-cyan-400' },
-              { label: '错误', value: stats.wrong, color: 'text-red-400' },
-              { label: '用时', value: `${elapsedTime}s`, color: 'text-amber-400' },
-              { label: '连击', value: stats.streak, color: 'text-green-400' },
+              { label: '正确', value: stats.correct, color: '#22d3ee' },
+              { label: '错误', value: stats.wrong, color: '#f87171' },
+              { label: '用时', value: `${elapsedTime}s`, color: '#fbbf24' },
+              { label: '连击', value: stats.streak, color: '#4ade80' },
             ].map(({ label, value, color }) => (
-              <div key={label} className="bg-white/[0.03] backdrop-blur-xl rounded-xl border border-white/[0.06] p-3 text-center">
-                <div className={`text-2xl font-bold ${color}`}>{value}</div>
-                <div className="text-[11px] text-gray-500 mt-0.5">{label}</div>
+              <div key={label} style={{ ...S.glass, padding: '12px', textAlign: 'center' }}>
+                <div style={{ fontSize: '22px', fontWeight: 700, color }}>{value}</div>
+                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>{label}</div>
               </div>
             ))}
           </div>
 
           {/* Logs */}
-          <div className="bg-white/[0.03] backdrop-blur-xl rounded-2xl border border-white/[0.06] overflow-hidden">
-            <div className="p-4 border-b border-white/[0.06]">
-              <h3 className="text-sm font-medium text-gray-300">📋 操作日志</h3>
+          <div style={{ ...S.glass, overflow: 'hidden', flex: 1, minHeight: 0 }}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <h3 style={{ fontSize: '13px', fontWeight: 600, color: '#94a3b8', margin: 0 }}>📋 操作日志</h3>
             </div>
-            <div className="p-3 max-h-[180px] overflow-y-auto font-mono text-xs space-y-0.5">
+            <div style={{ padding: '8px 12px', maxHeight: '160px', overflowY: 'auto' }}>
               {logs.length === 0 ? (
-                <div className="text-gray-600 text-center py-4">暂无日志</div>
+                <div style={{ textAlign: 'center', color: '#334155', padding: '16px 0', fontSize: '12px' }}>暂无日志</div>
               ) : (
                 logs.map(log => (
-                  <div
-                    key={log.id}
-                    className={`py-0.5 ${
-                      log.type === 'success' ? 'text-green-400' : log.type === 'error' ? 'text-red-400' : log.type === 'warning' ? 'text-amber-400' : 'text-gray-400'
-                    }`}
-                  >
-                    <span className="text-gray-600">[{log.time}]</span> {log.message}
+                  <div key={log.id} style={{ ...S.mono, fontSize: '11px', padding: '2px 0', color: log.type === 'success' ? '#4ade80' : log.type === 'error' ? '#f87171' : log.type === 'warning' ? '#fbbf24' : '#64748b' }}>
+                    <span style={{ color: '#334155' }}>[{log.time}]</span> {log.message}
                   </div>
                 ))
               )}
@@ -664,6 +684,18 @@ export default function RubikCubeTrainer() {
           </div>
         </div>
       </main>
+
+      {/* Animations */}
+      <style>{`
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+        button:hover { filter: brightness(1.2); }
+        button:active { transform: scale(0.97); }
+      `}</style>
     </div>
   );
 }
