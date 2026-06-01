@@ -418,7 +418,8 @@ export default function RubikCubeTrainer() {
       // Get MAC address from device (needed for App Hello)
       // Web Bluetooth doesn't expose MAC directly, but we can try to get it from advertisement
       // If not available, we'll try with zeros (some cubes accept it)
-      const macBytes = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+      // MAC address of cube: CC:A3:00:00:CC:3E (reversed: 3E:CC:00:00:A3:CC)
+      const macBytes = [0xCC, 0xA3, 0x00, 0x00, 0xCC, 0x3E];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const adv = (device as any).__adv_data;
       if (adv) {
