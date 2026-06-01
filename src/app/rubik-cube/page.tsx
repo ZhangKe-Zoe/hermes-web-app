@@ -401,45 +401,72 @@ export default function RubikCubeTrainer() {
       await notifyChar.startNotifications();
       addLog('🔔 订阅 fff6 通知', 'success');
 
-      // Try multiple activation methods
-      // Method 1: Raw activation bytes (simplest, no encryption)
+      // Also try subscribing to fff5 and fff4 for notifications
       try {
-        addLog('📤 尝试原始激活字节...', 'info');
-        await writeChar.writeValueWithoutResponse(new Uint8Array([0xA5]));
-        addLog('  ✅ 原始字节发送成功', 'success');
-      } catch (e) {
-        addLog(`  ❌ 原始字节失败: ${e}`, 'warning');
-      }
-      await new Promise(r => setTimeout(r, 500));
+        const fff5 = await service.getCharacteristic('0000fff5-0000-1000-8000-00805f9b34fb');
+        fff5.addEventListener('characteristicvaluechanged', ((event: Event) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const val = (event.target as any).value as DataView;
+          if (val) {
+            const raw = new Uint8Array(val.buffer);
+            const hex = Array.from(raw).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            addLog(`📦 fff5: ${hex.slice(0, 60)}`, 'info');
+          }
+        }) as EventListener);
+        await fff5.startNotifications();
+        addLog('🔔 也订阅了 fff5', 'info');
+      } catch { /* fff5 might not support notify */ }
 
-      // Method 2: Protocol frame (cmd=0x01, data=[01,00,01])
+      // Read fff7 state immediately
       try {
-        const activateFrame = buildFrame(0x01, [0x01, 0x00, 0x01]);
-        const hex = Array.from(activateFrame).map(b => b.toString(16).padStart(2, '0')).join(' ');
-        addLog(`📤 激活帧: ${hex}`, 'info');
-        await writeChar.writeValueWithoutResponse(activateFrame);
-        addLog('  ✅ 激活帧发送成功', 'success');
-      } catch (e) {
-        addLog(`  ❌ 激活帧失败: ${e}`, 'warning');
-      }
-      await new Promise(r => setTimeout(r, 500));
+        const fff7 = await service.getCharacteristic('0000fff7-0000-1000-8000-00805f9b34fb');
+        const val = await fff7.readValue();
+        const hex = Array.from(new Uint8Array(val.buffer)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        addLog(`📖 fff7: ${hex.slice(0, 60)}...`, 'info');
+      } catch (e) { addLog(`读取fff7失败: ${e}`, 'warning'); }
 
-      // Method 3: Encrypted activation
+      // Read fff6 current value
       try {
-        const encFrame = buildEncryptedFrame(0x01, [0x01, 0x00, 0x01]);
-        const hex = Array.from(encFrame).map(b => b.toString(16).padStart(2, '0')).join(' ');
-        addLog(`📤 加密帧: ${hex.slice(0, 40)}...`, 'info');
-        await writeChar.writeValueWithoutResponse(encFrame);
-        addLog('  ✅ 加密帧发送成功', 'success');
+        const val = await notifyChar.readValue();
+        const hex = Array.from(new Uint8Array(val.buffer)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        addLog(`📖 fff6: ${hex.slice(0, 60) || '(empty)'}`, 'info');
+      } catch (e) { addLog(`读取fff6失败: ${e}`, 'warning'); }
+
+      // Try sending raw bytes to fff4 (multiple formats)
+      const rawTests = [
+        { data: new Uint8Array([0xA5]), label: 'A5' },
+        { data: new Uint8Array([0xA5, 0x01]), label: 'A5 01' },
+        { data: new Uint8Array([0xCC, 0x01]), label: 'CC 01' },
+        { data: new Uint8Array([0x01]), label: '01' },
+        { data: new Uint8Array([0xFE, 0x05, 0x01, 0x01, 0x00, 0x01, 0x01, 0x55]), label: 'FE-frame' },
+        { data: buildFrame(0x01, [0x01, 0x00, 0x01]), label: 'AA-frame(cmd1)' },
+        { data: buildEncryptedFrame(0x01, [0x01, 0x00, 0x01]), label: 'AA-enc(cmd1)' },
+      ];
+
+      for (const { data, label } of rawTests) {
+        try {
+          await writeChar.writeValueWithoutResponse(data);
+          const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+          addLog(`📤 fff4 [${label}] ✅`, 'success');
+          await new Promise(r => setTimeout(r, 300));
+        } catch (e) {
+          addLog(`📤 fff4 [${label}] ❌`, 'warning');
+        }
+      }
+
+      // Also try writing to fff5
+      try {
+        const fff5w = await service.getCharacteristic('0000fff5-0000-1000-8000-00805f9b34fb');
+        await fff5w.writeValueWithoutResponse(new Uint8Array([0xA5]));
+        addLog('📤 fff5 [A5] ✅', 'success');
       } catch (e) {
-        addLog(`  ❌ 加密帧失败: ${e}`, 'warning');
+        addLog(`📤 fff5 [A5] ❌`, 'warning');
       }
 
       // Start heartbeat
       heartbeatRef.current = setInterval(() => {
         if (writeRef.current) {
-          const hb = buildFrame(0x08, []);
-          writeRef.current.writeValueWithoutResponse(hb).catch(() => {});
+          writeRef.current.writeValueWithoutResponse(new Uint8Array([0xA5])).catch(() => {});
         }
       }, 2000);
       addLog('💓 心跳已启动', 'info');
