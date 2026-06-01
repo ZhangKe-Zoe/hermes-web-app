@@ -370,44 +370,60 @@ export default function RubikCubeTrainer() {
       const server = await device.gatt!.connect();
       addLog('GATT 连接成功', 'info');
 
-      // Get service and characteristics
+      // Get service
       const service = await server.getPrimaryService(QY_SERVICE_UUID);
       addLog('获取服务成功', 'info');
 
-      // Try to get move notification characteristic
-      try {
-        const moveChar = await service.getCharacteristic(QY_MOVE_CHAR);
-        moveCharRef.current = moveChar;
+      // ── Probe ALL characteristics on this service ──
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const chars: any[] = await service.getCharacteristics();
+      addLog(`发现 ${chars.length} 个特征值`, 'info');
 
-        // Listen for move notifications
-        moveChar.addEventListener('characteristicvaluechanged', ((event: Event) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const char = event.target as any;
-          if (char.value) {
-            const move = decodeQYMove(char.value);
-            if (move) handleCubeMove(move);
+      // Log each characteristic for debugging
+      let subscribed = false;
+      for (const char of chars) {
+        const uuid = char.uuid;
+        const props = char.properties;
+        const propList = [
+          props.read ? 'READ' : '',
+          props.write ? 'WRITE' : '',
+          props.notify ? 'NOTIFY' : '',
+          props.indicate ? 'INDICATE' : '',
+        ].filter(Boolean).join('+');
+        addLog(`  ${uuid.slice(4, 8)}: ${propList || 'none'}`, 'info');
+
+        // Try to subscribe to any characteristic that supports notifications
+        if (props.notify && !subscribed) {
+          try {
+            char.addEventListener('characteristicvaluechanged', ((event: Event) => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const target = event.target as any;
+              if (!target.value) return;
+              const data = target.value;
+
+              // Log raw bytes for debugging (first few times)
+              const bytes = Array.from(new Uint8Array(data.buffer)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+              addLog(`📦 [${uuid.slice(4,8)}] ${bytes}`, 'info');
+
+              // Try to decode as a move
+              const move = decodeQYMove(data);
+              if (move) {
+                handleCubeMove(move);
+              }
+            }) as EventListener);
+
+            await char.startNotifications();
+            subscribed = true;
+            moveCharRef.current = char;
+            addLog(`✅ 已订阅 ${uuid.slice(4, 8)} 通知`, 'success');
+          } catch (e) {
+            addLog(`  订阅 ${uuid.slice(4, 8)} 失败: ${e}`, 'warning');
           }
-        }) as EventListener);
-
-        await moveChar.startNotifications();
-        addLog('✅ 已订阅魔方旋转数据', 'success');
-      } catch {
-        // Fallback: try state characteristic
-        try {
-          const stateChar = await service.getCharacteristic(QY_STATE_CHAR);
-          stateChar.addEventListener('characteristicvaluechanged', ((event: Event) => {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const char = event.target as any;
-            if (char.value) {
-              // State data contains cube state, log it
-              addLog(`收到魔方状态 (${char.value.byteLength} bytes)`, 'info');
-            }
-          }) as EventListener);
-          await stateChar.startNotifications();
-          addLog('✅ 已订阅魔方状态数据', 'success');
-        } catch {
-          addLog('⚠️ 无法订阅旋转通知，但已连接', 'warning');
         }
+      }
+
+      if (!subscribed) {
+        addLog('⚠️ 未找到可订阅的通知特征值', 'warning');
       }
 
       setIsConnected(true);
