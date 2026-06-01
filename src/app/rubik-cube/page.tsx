@@ -426,6 +426,48 @@ export default function RubikCubeTrainer() {
         addLog('⚠️ 未找到可订阅的通知特征值', 'warning');
       }
 
+      // ── Send activation commands to start move reporting ──
+      // QY/Qiyi cubes need a write command to start sending moves
+      for (const char of chars) {
+        const uuid = char.uuid;
+        const props = char.properties;
+        if (props.write || props.writeWithoutResponse) {
+          // Try common activation commands
+          const cmds = [
+            new Uint8Array([0xA5]),                          // Simple start
+            new Uint8Array([0xA5, 0x01]),                    // Start moves
+            new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),  // Giiker-style
+            new Uint8Array([0xCC, 0x01]),                    // Qiyi start
+          ];
+          for (const cmd of cmds) {
+            try {
+              const cmdBytes = Array.from(cmd).map(b => b.toString(16).padStart(2, '0')).join(' ');
+              addLog(`📤 写入 ${uuid.slice(4,8)}: ${cmdBytes}`, 'info');
+              await char.writeValue(cmd);
+              await new Promise(r => setTimeout(r, 200));
+            } catch (e) {
+              // Some commands may fail, that's ok
+              addLog(`  写入失败: ${e}`, 'warning');
+            }
+          }
+          // Only try first writable characteristic
+          break;
+        }
+      }
+
+      // Also try reading fff7 (state) to trigger data flow
+      for (const char of chars) {
+        if (char.uuid.includes('fff7') && char.properties.read) {
+          try {
+            const val = await char.readValue();
+            const bytes = Array.from(new Uint8Array(val.buffer)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            addLog(`📖 fff7 状态: ${bytes}`, 'info');
+          } catch (e) {
+            addLog(`读取 fff7 失败: ${e}`, 'warning');
+          }
+        }
+      }
+
       setIsConnected(true);
       setConnectionStatus(`已连接: ${device.name || 'QY Cube'}`);
       addLog('✅ 魔方连接成功！转动魔方试试', 'success');
