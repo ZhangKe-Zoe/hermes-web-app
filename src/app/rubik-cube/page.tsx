@@ -3,48 +3,24 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 // ── Types ──
-interface Formula {
-  id: string;
-  name: string;
-  formula: string;
-  description: string;
-  difficulty?: 'beginner' | 'intermediate' | 'advanced';
-}
-
+interface Formula { id: string; name: string; formula: string; description: string; difficulty?: 'beginner' | 'intermediate' | 'advanced'; }
 interface Stats { correct: number; wrong: number; streak: number; bestStreak: number; }
 interface LogEntry { id: number; time: string; message: string; type: 'info' | 'success' | 'error' | 'warning'; }
 
-// ── Qiyi Smart Cube Protocol ──
-// Source: https://codeberg.org/Flying-Toast/qiyi_smartcube_protocol
+// ── Qiyi Smart Cube Protocol (from CSDN blog) ──
+// Service: 0000fff0-0000-1000-8000-00805f9b34fb
+// Read/Notify: fff1, Write: fff2
+// AES-128-ECB key: "0102030405060708" (ASCII hex: 30313032303330343035303630373038)
+// Frame: [0xAA][LEN_H][LEN_L][CMD][DATA...][XOR][0x55]
+
 const QIYI_SERVICE = '0000fff0-0000-1000-8000-00805f9b34fb';
-const QIYI_CHAR_RW = '0000fff6-0000-1000-8000-00805f9b34fb'; // Main: WRITE + NOTIFY
+const QIYI_CHAR_NOTIFY = '0000fff1-0000-1000-8000-00805f9b34fb';
+const QIYI_CHAR_WRITE = '0000fff2-0000-1000-8000-00805f9b34fb';
 
-// AES-128-ECB key (fixed)
-const AES_KEY = [0x57, 0xb1, 0xf9, 0xab, 0xcd, 0x5a, 0xe8, 0xa7, 0x9c, 0xb9, 0x8c, 0xe7, 0x57, 0x8c, 0x51, 0x08];
+// AES key: "0102030405060708" as bytes
+const AES_KEY = [0x30, 0x31, 0x30, 0x32, 0x30, 0x33, 0x30, 0x34, 0x30, 0x35, 0x30, 0x36, 0x30, 0x37, 0x30, 0x38];
 
-// CRC-16 MODBUS
-function crc16(data: Uint8Array): number {
-  let crc = 0xFFFF;
-  for (let i = 0; i < data.length; i++) {
-    crc ^= data[i];
-    for (let j = 0; j < 8; j++) {
-      crc = (crc & 1) ? ((crc >> 1) ^ 0xA001) : (crc >> 1);
-    }
-  }
-  return crc;
-}
-
-// Pad to 16-byte blocks
-function padTo16(data: Uint8Array): Uint8Array {
-  const padLen = (16 - (data.length % 16)) % 16;
-  if (padLen === 0) return data;
-  const padded = new Uint8Array(data.length + padLen);
-  padded.set(data);
-  return padded;
-}
-
-// AES-128-ECB encrypt (pure JS, no Web Crypto needed)
-// S-Box
+// ── AES-128-ECB (pure JS) ──
 const SBOX = [
   0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
   0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
@@ -63,285 +39,212 @@ const SBOX = [
   0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
   0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16,
 ];
+const INV_SBOX = new Uint8Array(256);
+for (let i = 0; i < 256; i++) INV_SBOX[SBOX[i]] = i;
 
-// Rcon for key expansion
 const RCON = [0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36];
 
-function aesKeyExpansion(key: number[]): number[] {
+function gfMul(a: number, b: number): number {
+  let p = 0;
+  for (let i = 0; i < 8; i++) { if (b & 1) p ^= a; const hi = a & 0x80; a = (a << 1) & 0xFF; if (hi) a ^= 0x1b; b >>= 1; }
+  return p;
+}
+
+function keyExpansion(key: number[]): number[] {
   const w = new Array(176);
   for (let i = 0; i < 16; i++) w[i] = key[i];
   for (let i = 16; i < 176; i += 4) {
     let temp = [w[i-4], w[i-3], w[i-2], w[i-1]];
-    if (i % 16 === 0) {
-      temp = [SBOX[temp[1]] ^ RCON[i/16-1], SBOX[temp[2]], SBOX[temp[3]], SBOX[temp[0]]];
-    }
+    if (i % 16 === 0) temp = [SBOX[temp[1]] ^ RCON[i/16-1], SBOX[temp[2]], SBOX[temp[3]], SBOX[temp[0]]];
     for (let j = 0; j < 4; j++) w[i+j] = w[i-16+j] ^ temp[j];
   }
   return w;
 }
 
-function aesEncryptBlock(block: number[], expandedKey: number[]): number[] {
-  const state = [...block];
-  const nr = 10;
-
-  // AddRoundKey
-  for (let i = 0; i < 16; i++) state[i] ^= expandedKey[i];
-
-  for (let round = 1; round < nr; round++) {
-    // SubBytes
-    for (let i = 0; i < 16; i++) state[i] = SBOX[state[i]];
-    // ShiftRows
-    const t = [state[1], state[5], state[9], state[13]];
-    state[1] = state[5]; state[5] = state[9]; state[9] = state[13]; state[13] = t[0];
-    const t2 = [state[2], state[6], state[10], state[14]];
-    state[2] = state[10]; state[10] = t2[0]; state[6] = state[14]; state[14] = t2[1];
-    const t3 = [state[3], state[7], state[11], state[15]];
-    state[3] = state[15]; state[15] = state[11]; state[11] = state[7]; state[7] = t3[0];
-    // MixColumns
+function aesEncryptBlock(block: number[], ek: number[]): number[] {
+  const s = [...block];
+  for (let i = 0; i < 16; i++) s[i] ^= ek[i];
+  for (let round = 1; round < 10; round++) {
+    for (let i = 0; i < 16; i++) s[i] = SBOX[s[i]];
+    let t = s[1]; s[1]=s[5]; s[5]=s[9]; s[9]=s[13]; s[13]=t;
+    t=s[2]; s[2]=s[10]; s[10]=t; t=s[6]; s[6]=s[14]; s[14]=t;
+    t=s[3]; s[3]=s[15]; s[15]=s[11]; s[11]=s[7]; s[7]=t;
     for (let c = 0; c < 4; c++) {
-      const i = c * 4;
-      const a = [state[i], state[i+1], state[i+2], state[i+3]];
-      state[i]   = gfMul(a[0],2) ^ gfMul(a[1],3) ^ a[2] ^ a[3];
-      state[i+1] = a[0] ^ gfMul(a[1],2) ^ gfMul(a[2],3) ^ a[3];
-      state[i+2] = a[0] ^ a[1] ^ gfMul(a[2],2) ^ gfMul(a[3],3);
-      state[i+3] = gfMul(a[0],3) ^ a[1] ^ a[2] ^ gfMul(a[3],2);
+      const i = c*4; const a=[s[i],s[i+1],s[i+2],s[i+3]];
+      s[i]=gfMul(a[0],2)^gfMul(a[1],3)^a[2]^a[3]; s[i+1]=a[0]^gfMul(a[1],2)^gfMul(a[2],3)^a[3];
+      s[i+2]=a[0]^a[1]^gfMul(a[2],2)^gfMul(a[3],3); s[i+3]=gfMul(a[0],3)^a[1]^a[2]^gfMul(a[3],2);
     }
-    // AddRoundKey
-    for (let i = 0; i < 16; i++) state[i] ^= expandedKey[round*16+i];
+    for (let i = 0; i < 16; i++) s[i] ^= ek[round*16+i];
   }
-
-  // Final round (no MixColumns)
-  for (let i = 0; i < 16; i++) state[i] = SBOX[state[i]];
-  const t = [state[1], state[5], state[9], state[13]];
-  state[1] = state[5]; state[5] = state[9]; state[9] = state[13]; state[13] = t[0];
-  const t2 = [state[2], state[6], state[10], state[14]];
-  state[2] = state[10]; state[10] = t2[0]; state[6] = state[14]; state[14] = t2[1];
-  const t3 = [state[3], state[7], state[11], state[15]];
-  state[3] = state[15]; state[15] = state[11]; state[11] = state[7]; state[7] = t3[0];
-  for (let i = 0; i < 16; i++) state[i] ^= expandedKey[nr*16+i];
-
-  return state;
+  for (let i = 0; i < 16; i++) s[i] = SBOX[s[i]];
+  let t = s[1]; s[1]=s[5]; s[5]=s[9]; s[9]=s[13]; s[13]=t;
+  t=s[2]; s[2]=s[10]; s[10]=t; t=s[6]; s[6]=s[14]; s[14]=t;
+  t=s[3]; s[3]=s[15]; s[15]=s[11]; s[11]=s[7]; s[7]=t;
+  for (let i = 0; i < 16; i++) s[i] ^= ek[10*16+i];
+  return s;
 }
 
-function gfMul(a: number, b: number): number {
-  let p = 0;
-  for (let i = 0; i < 8; i++) {
-    if (b & 1) p ^= a;
-    const hi = a & 0x80;
-    a = (a << 1) & 0xFF;
-    if (hi) a ^= 0x1b;
-    b >>= 1;
+function aesDecryptBlock(block: number[], ek: number[]): number[] {
+  const s = [...block];
+  for (let i = 0; i < 16; i++) s[i] ^= ek[10*16+i];
+  for (let round = 9; round >= 1; round--) {
+    let t = s[13]; s[13]=s[9]; s[9]=s[5]; s[5]=s[1]; s[1]=t;
+    t=s[2]; s[2]=s[10]; s[10]=t; t=s[6]; s[6]=s[14]; s[14]=t;
+    t=s[3]; s[3]=s[7]; s[7]=s[11]; s[11]=s[15]; s[15]=t;
+    for (let i = 0; i < 16; i++) s[i] = INV_SBOX[s[i]];
+    for (let i = 0; i < 16; i++) s[i] ^= ek[round*16+i];
+    for (let c = 0; c < 4; c++) {
+      const i = c*4; const a=[s[i],s[i+1],s[i+2],s[i+3]];
+      s[i]=gfMul(a[0],14)^gfMul(a[1],11)^gfMul(a[2],13)^gfMul(a[3],9);
+      s[i+1]=gfMul(a[0],9)^gfMul(a[1],14)^gfMul(a[2],11)^gfMul(a[3],13);
+      s[i+2]=gfMul(a[0],13)^gfMul(a[1],9)^gfMul(a[2],14)^gfMul(a[3],11);
+      s[i+3]=gfMul(a[0],11)^gfMul(a[1],13)^gfMul(a[2],9)^gfMul(a[3],14);
+    }
   }
-  return p;
+  let t = s[13]; s[13]=s[9]; s[9]=s[5]; s[5]=s[1]; s[1]=t;
+  t=s[2]; s[2]=s[10]; s[10]=t; t=s[6]; s[6]=s[14]; s[14]=t;
+  t=s[3]; s[3]=s[7]; s[7]=s[11]; s[11]=s[15]; s[15]=t;
+  for (let i = 0; i < 16; i++) s[i] = INV_SBOX[s[i]];
+  for (let i = 0; i < 16; i++) s[i] ^= ek[i];
+  return s;
 }
 
-function aesEcbEncrypt(data: Uint8Array, key: number[]): Uint8Array {
-  const expandedKey = aesKeyExpansion(key);
-  const padded = padTo16(data);
-  const result = new Uint8Array(padded.length);
-  for (let i = 0; i < padded.length; i += 16) {
-    const block = Array.from(padded.slice(i, i + 16));
-    const enc = aesEncryptBlock(block, expandedKey);
-    result.set(enc, i);
-  }
-  return result;
-}
-
-function aesEcbDecrypt(data: Uint8Array, key: number[]): Uint8Array {
-  // For decryption we need inverse S-Box and inverse operations
-  // For now, since we mainly need to parse cube→app messages,
-  // we'll implement a simplified version
-  const expandedKey = aesKeyExpansion(key);
-  const invSbox = new Array(256);
-  for (let i = 0; i < 256; i++) invSbox[SBOX[i]] = i;
-
+function aesEcbEncrypt(data: Uint8Array): Uint8Array {
+  const ek = keyExpansion(AES_KEY);
   const result = new Uint8Array(data.length);
-  for (let offset = 0; offset < data.length; offset += 16) {
-    const block = Array.from(data.slice(offset, offset + 16));
-    const state = [...block];
-
-    // AddRoundKey (round 10)
-    for (let i = 0; i < 16; i++) state[i] ^= expandedKey[10*16+i];
-
-    for (let round = 9; round >= 1; round--) {
-      // InvShiftRows
-      const t = [state[13], state[9], state[5], state[1]];
-      state[1] = t[0]; state[5] = t[1]; state[9] = t[2]; state[13] = t[3];
-      const t2 = [state[2], state[6], state[10], state[14]];
-      state[2] = state[10]; state[10] = t2[0]; state[6] = state[14]; state[14] = t2[1];
-      const t3 = [state[3], state[7], state[11], state[15]];
-      state[3] = state[7]; state[7] = state[11]; state[11] = state[15]; state[15] = t3[0];
-      // InvSubBytes
-      for (let i = 0; i < 16; i++) state[i] = invSbox[state[i]];
-      // AddRoundKey
-      for (let i = 0; i < 16; i++) state[i] ^= expandedKey[round*16+i];
-      // InvMixColumns
-      for (let c = 0; c < 4; c++) {
-        const i = c * 4;
-        const a = [state[i], state[i+1], state[i+2], state[i+3]];
-        state[i]   = gfMul(a[0],14) ^ gfMul(a[1],11) ^ gfMul(a[2],13) ^ gfMul(a[3],9);
-        state[i+1] = gfMul(a[0],9) ^ gfMul(a[1],14) ^ gfMul(a[2],11) ^ gfMul(a[3],13);
-        state[i+2] = gfMul(a[0],13) ^ gfMul(a[1],9) ^ gfMul(a[2],14) ^ gfMul(a[3],11);
-        state[i+3] = gfMul(a[0],11) ^ gfMul(a[1],13) ^ gfMul(a[2],9) ^ gfMul(a[3],14);
-      }
-    }
-
-    // InvShiftRows (round 0)
-    const t = [state[13], state[9], state[5], state[1]];
-    state[1] = t[0]; state[5] = t[1]; state[9] = t[2]; state[13] = t[3];
-    const t2 = [state[2], state[6], state[10], state[14]];
-    state[2] = state[10]; state[10] = t2[0]; state[6] = state[14]; state[14] = t2[1];
-    const t3 = [state[3], state[7], state[11], state[15]];
-    state[3] = state[7]; state[7] = state[11]; state[11] = state[15]; state[15] = t3[0];
-    for (let i = 0; i < 16; i++) state[i] = invSbox[state[i]];
-    // Final AddRoundKey (round 0)
-    for (let i = 0; i < 16; i++) state[i] ^= expandedKey[i];
-
-    result.set(state, offset);
+  for (let i = 0; i < data.length; i += 16) {
+    const block = Array.from(data.slice(i, i + 16));
+    result.set(aesEncryptBlock(block, ek), i);
   }
   return result;
 }
 
-// Build protocol message: [0xFE] [len] [payload] [crc16_le], then pad+encrypt
-function buildMessage(payload: number[]): Uint8Array {
-  const len = payload.length + 4; // FE + len + payload + 2 CRC bytes
-  const msg = new Uint8Array(len);
-  msg[0] = 0xFE;
-  msg[1] = len;
-  for (let i = 0; i < payload.length; i++) msg[i + 2] = payload[i];
-  const crc = crc16(msg.slice(0, len - 2));
-  msg[len - 2] = crc & 0xFF;
-  msg[len - 1] = (crc >> 8) & 0xFF;
-  return aesEcbEncrypt(msg, AES_KEY);
-}
-
-// Parse received encrypted message
-function parseMessage(encrypted: Uint8Array): { opcode: number; data: Uint8Array } | null {
-  try {
-    const decrypted = aesEcbDecrypt(encrypted, AES_KEY);
-    // Find 0xFE start byte
-    let start = 0;
-    while (start < decrypted.length && decrypted[start] !== 0xFE) start++;
-    if (start >= decrypted.length) return null;
-
-    const msgLen = decrypted[start + 1];
-    if (msgLen < 4 || start + msgLen > decrypted.length) return null;
-
-    const msg = decrypted.slice(start, start + msgLen);
-    // Verify CRC
-    const expectedCrc = msg[msgLen - 2] | (msg[msgLen - 1] << 8);
-    const actualCrc = crc16(msg.slice(0, msgLen - 2));
-    if (expectedCrc !== actualCrc) {
-      // CRC mismatch but try to parse anyway
-    }
-
-    const opcode = msg[2];
-    const data = msg.slice(2); // opcode + rest
-    return { opcode, data };
-  } catch {
-    return null;
+function aesEcbDecrypt(data: Uint8Array): Uint8Array {
+  const ek = keyExpansion(AES_KEY);
+  const result = new Uint8Array(data.length);
+  for (let i = 0; i < data.length; i += 16) {
+    const block = Array.from(data.slice(i, i + 16));
+    result.set(aesDecryptBlock(block, ek), i);
   }
+  return result;
 }
 
-// Move lookup table
-const MOVE_TABLE: Record<number, string> = {
-  0x01: "L'", 0x02: 'L', 0x03: "R'", 0x04: 'R',
-  0x05: "D'", 0x06: 'D', 0x07: "U'", 0x08: 'U',
-  0x09: "F'", 0x0A: 'F', 0x0B: "B'", 0x0C: 'B',
-};
+// Build frame: [0xAA][LEN_H][LEN_L][CMD][DATA...][XOR][0x55]
+function buildFrame(cmd: number, data: number[]): Uint8Array {
+  const payloadLen = 1 + data.length + 1; // cmd + data + xor
+  const frame = new Uint8Array(4 + payloadLen); // AA + LEN_H + LEN_L + payload + 55
+  frame[0] = 0xAA;
+  frame[1] = (payloadLen >> 8) & 0xFF;
+  frame[2] = payloadLen & 0xFF;
+  frame[3] = cmd;
+  for (let i = 0; i < data.length; i++) frame[4 + i] = data[i];
+  // XOR checksum: XOR of cmd through last data byte
+  let xor = cmd;
+  for (let i = 0; i < data.length; i++) xor ^= data[i];
+  frame[4 + data.length] = xor;
+  frame[5 + data.length] = 0x55;
+  return frame;
+}
 
-// Color mapping for cube state
-const COLOR_MAP: Record<number, string> = {
-  0: '#FF5800', // Orange
-  1: '#C41E3A', // Red
-  2: '#FFD500', // Yellow
-  3: '#FFFFFF', // White
-  4: '#009E60', // Green
-  5: '#0051BA', // Blue
-};
+// Build encrypted frame: encrypt the payload part, then wrap in frame
+function buildEncryptedFrame(cmd: number, data: number[]): Uint8Array {
+  // Build plaintext payload (cmd + data), pad to 16 bytes, encrypt
+  const plain = new Uint8Array(1 + data.length);
+  plain[0] = cmd;
+  for (let i = 0; i < data.length; i++) plain[i + 1] = data[i];
+  // Pad to multiple of 16
+  const padLen = (16 - (plain.length % 16)) % 16;
+  const padded = new Uint8Array(plain.length + padLen);
+  padded.set(plain);
+  const encrypted = aesEcbEncrypt(padded);
+  // Build frame with encrypted data
+  const frameLen = encrypted.length + 1 + 1; // encrypted + xor + 55
+  const frame = new Uint8Array(4 + frameLen);
+  frame[0] = 0xAA;
+  frame[1] = (frameLen >> 8) & 0xFF;
+  frame[2] = frameLen & 0xFF;
+  frame[3] = 0x00; // cmd is inside encrypted payload
+  frame.set(encrypted, 4);
+  // XOR of encrypted data
+  let xor = 0;
+  for (let i = 0; i < encrypted.length; i++) xor ^= encrypted[i];
+  frame[4 + encrypted.length] = xor;
+  frame[5 + encrypted.length] = 0x55;
+  return frame;
+}
+
+// Parse received frame
+function parseFrame(data: Uint8Array): { cmd: number; payload: Uint8Array } | null {
+  if (data.length < 6 || data[0] !== 0xAA || data[data.length - 1] !== 0x55) return null;
+  const cmd = data[3];
+  // Extract encrypted payload (between cmd and xor+55)
+  const encPayload = data.slice(4, data.length - 2);
+  if (encPayload.length === 0) return { cmd, payload: new Uint8Array(0) };
+  // Decrypt
+  const decrypted = aesEcbDecrypt(encPayload);
+  return { cmd, payload: decrypted };
+}
+
+// Move decoding
+const FACES = ['U', 'R', 'F', 'D', 'L', 'B'];
+const DIRS = ['', "'", '2'];
 
 // ── Formula Library ──
 const formulaLibrary: Record<string, Formula[]> = {
   OLL: [
-    { id: 'OLL-1', name: '点 → 十字', formula: "F R U R' U' F'", description: '顶层十字情况', difficulty: 'beginner' },
-    { id: 'OLL-2', name: '点 → 十字', formula: "F U R U' R' F'", description: '另一种十字情况', difficulty: 'beginner' },
-    { id: 'OLL-3', name: '十字 → 全黄', formula: "R U R' U R U2 R'", description: '鱼形情况', difficulty: 'intermediate' },
-    { id: 'OLL-4', name: '十字 → 全黄', formula: "R U2 R' U' R U' R'", description: '另一种鱼形', difficulty: 'intermediate' },
-    { id: 'OLL-21', name: '十字 + 两侧', formula: "R U2 R' U' R U R' U' R U' R'", description: '21号OLL', difficulty: 'advanced' },
-    { id: 'OLL-22', name: '十字 + 两侧', formula: "R U2 R2 U' R2 U' R2 U2 R", description: '22号OLL', difficulty: 'advanced' },
-    { id: 'OLL-23', name: '十字 + 对角', formula: "R2 D R' U2 R D' R' U2 R'", description: '23号OLL', difficulty: 'advanced' },
-    { id: 'OLL-24', name: '十字 + 对角', formula: "r U R' U' r' F R F'", description: '24号OLL', difficulty: 'intermediate' },
-    { id: 'OLL-25', name: '十字 + 一字', formula: "F' r U R' U' r' F R", description: '25号OLL', difficulty: 'intermediate' },
-    { id: 'OLL-26', name: '十字 + 一字', formula: "R U2 R' U' R U' R'", description: '反鱼形', difficulty: 'beginner' },
-    { id: 'OLL-27', name: '全黄', formula: "R U R' U R U2 R'", description: '正鱼形', difficulty: 'beginner' },
-    { id: 'OLL-57', name: '全黄', formula: "R U R' U' M' U R U' r'", description: '57号OLL', difficulty: 'advanced' },
+    { id: 'OLL-1', name: '点→十字', formula: "F R U R' U' F'", description: '顶层十字', difficulty: 'beginner' },
+    { id: 'OLL-2', name: '点→十字', formula: "F U R U' R' F'", description: '另一种十字', difficulty: 'beginner' },
+    { id: 'OLL-3', name: '十字→全黄', formula: "R U R' U R U2 R'", description: '鱼形', difficulty: 'intermediate' },
+    { id: 'OLL-4', name: '十字→全黄', formula: "R U2 R' U' R U' R'", description: '反鱼形', difficulty: 'intermediate' },
+    { id: 'OLL-21', name: '十字+两侧', formula: "R U2 R' U' R U R' U' R U' R'", description: '21号', difficulty: 'advanced' },
+    { id: 'OLL-26', name: '反鱼形', formula: "R U2 R' U' R U' R'", description: '反鱼形', difficulty: 'beginner' },
+    { id: 'OLL-27', name: '正鱼形', formula: "R U R' U R U2 R'", description: '正鱼形', difficulty: 'beginner' },
   ],
   PLL: [
-    { id: 'PLL-Ua', name: 'Ua排列', formula: "R U R' U R' U' R2 U' R' U R' U R", description: '顺时针三棱换', difficulty: 'intermediate' },
-    { id: 'PLL-Ub', name: 'Ub排列', formula: "R' U R' U' R2 U' R' U R U R2", description: '逆时针三棱换', difficulty: 'intermediate' },
-    { id: 'PLL-H', name: 'H排列', formula: "M2 U M2 U2 M2 U M2", description: '对棱换', difficulty: 'beginner' },
-    { id: 'PLL-Z', name: 'Z排列', formula: "M2 U M2 U M' U2 M2 U2 M'", description: '邻棱换', difficulty: 'intermediate' },
-    { id: 'PLL-Aa', name: 'Aa排列', formula: "R' F R' B2 R F' R' B2 R2", description: '三角换顺时针', difficulty: 'advanced' },
-    { id: 'PLL-Ab', name: 'Ab排列', formula: "R2 B2 R F R' B2 R F' R", description: '三角换逆时针', difficulty: 'advanced' },
-    { id: 'PLL-T', name: 'T排列', formula: "R U R' U' R' F R2 U' R' U' R U R' F'", description: 'T排列', difficulty: 'intermediate' },
-    { id: 'PLL-Y', name: 'Y排列', formula: "F R U' R' U' R U R' F' R U R' U' R' F R F'", description: 'Y排列', difficulty: 'advanced' },
+    { id: 'PLL-Ua', name: 'Ua', formula: "R U R' U R' U' R2 U' R' U R' U R", description: '顺时针三棱换', difficulty: 'intermediate' },
+    { id: 'PLL-Ub', name: 'Ub', formula: "R' U R' U' R2 U' R' U R U R2", description: '逆时针三棱换', difficulty: 'intermediate' },
+    { id: 'PLL-H', name: 'H', formula: "M2 U M2 U2 M2 U M2", description: '对棱换', difficulty: 'beginner' },
+    { id: 'PLL-T', name: 'T', formula: "R U R' U' R' F R2 U' R' U' R U R' F'", description: 'T排列', difficulty: 'intermediate' },
   ],
   F2L: [
-    { id: 'F2L-1', name: '基础情况1', formula: "U R U' R'", description: '角块在底层，棱在顶层', difficulty: 'beginner' },
-    { id: 'F2L-2', name: '基础情况2', formula: "U' F' U F", description: '角块在底层，棱在顶层', difficulty: 'beginner' },
-    { id: 'F2L-3', name: '基础情况3', formula: "R U' R'", description: '角块棱块都在底层', difficulty: 'beginner' },
-    { id: 'F2L-4', name: '基础情况4', formula: "F' U F", description: '角块棱块都在底层', difficulty: 'beginner' },
-    { id: 'F2L-5', name: '角块朝上', formula: "R U2 R' U' R U R'", description: '角块白色朝上', difficulty: 'intermediate' },
-    { id: 'F2L-6', name: '角块朝上', formula: "F' U2 F U F' U' F", description: '角块白色朝上', difficulty: 'intermediate' },
-    { id: 'F2L-7', name: '棱块已就位', formula: "R U R' U' R U R'", description: '棱块已到位，角块需调整', difficulty: 'intermediate' },
-    { id: 'F2L-8', name: '棱块已就位', formula: "F' U' F U F' U' F", description: '棱块已到位，角块需调整', difficulty: 'intermediate' },
+    { id: 'F2L-1', name: '基础1', formula: "U R U' R'", description: '角在底棱在顶', difficulty: 'beginner' },
+    { id: 'F2L-2', name: '基础2', formula: "U' F' U F", description: '角在底棱在顶', difficulty: 'beginner' },
+    { id: 'F2L-3', name: '基础3', formula: "R U' R'", description: '都在底层', difficulty: 'beginner' },
+    { id: 'F2L-5', name: '角朝上', formula: "R U2 R' U' R U R'", description: '白色朝上', difficulty: 'intermediate' },
   ],
 };
 
 // ── Styles ──
 const S = {
-  page: { minHeight: '100vh', background: 'linear-gradient(135deg, #030712 0%, #0f172a 50%, #030712 100%)', color: '#e2e8f0', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif' } as React.CSSProperties,
-  glass: { background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px' } as React.CSSProperties,
+  page: { minHeight: '100vh', background: 'linear-gradient(135deg, #030712, #0f172a, #030712)', color: '#e2e8f0', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif' } as React.CSSProperties,
+  glass: { background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px' } as React.CSSProperties,
   card: { background: 'rgba(0,0,0,0.2)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' } as React.CSSProperties,
-  btn: (active?: boolean) => ({ padding: '6px 14px', fontSize: '13px', fontWeight: 600 as const, borderRadius: '8px', border: 'none', cursor: 'pointer' as const, transition: 'all 0.15s', background: active ? '#06b6d4' : 'rgba(255,255,255,0.06)', color: active ? '#fff' : '#94a3b8' } as React.CSSProperties),
-  btnSm: { padding: '4px 10px', fontSize: '11px', fontWeight: 500, borderRadius: '6px', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: '#94a3b8', cursor: 'pointer', transition: 'all 0.15s' } as React.CSSProperties,
-  mono: { fontFamily: '"SF Mono", "Fira Code", Menlo, Consolas, monospace' } as React.CSSProperties,
+  btn: (a?: boolean) => ({ padding: '6px 14px', fontSize: '13px', fontWeight: 600 as const, borderRadius: '8px', border: 'none', cursor: 'pointer' as const, background: a ? '#06b6d4' : 'rgba(255,255,255,0.06)', color: a ? '#fff' : '#94a3b8' } as React.CSSProperties),
+  btnSm: { padding: '4px 10px', fontSize: '11px', fontWeight: 500, borderRadius: '6px', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: '#94a3b8', cursor: 'pointer' } as React.CSSProperties,
+  mono: { fontFamily: '"SF Mono", Menlo, Consolas, monospace' } as React.CSSProperties,
 };
-
 function diffMeta(d?: string) {
-  switch (d) {
-    case 'beginner': return { label: '初级', color: '#4ade80', bg: 'rgba(74,222,128,0.15)' };
-    case 'intermediate': return { label: '中级', color: '#facc15', bg: 'rgba(250,204,21,0.15)' };
-    case 'advanced': return { label: '高级', color: '#f87171', bg: 'rgba(248,113,113,0.15)' };
-    default: return { label: '全部', color: '#94a3b8', bg: 'rgba(148,163,184,0.1)' };
-  }
+  switch (d) { case 'beginner': return { label: '初级', color: '#4ade80', bg: 'rgba(74,222,128,0.15)' }; case 'intermediate': return { label: '中级', color: '#facc15', bg: 'rgba(250,204,21,0.15)' }; case 'advanced': return { label: '高级', color: '#f87171', bg: 'rgba(248,113,113,0.15)' }; default: return { label: '全部', color: '#94a3b8', bg: 'rgba(148,163,184,0.1)' }; }
 }
 
 // ── 3D Cube ──
-function Cube3D({ rotationX, rotationY }: { rotationX: number; rotationY: number }) {
+function Cube3D({ rx, ry }: { rx: number; ry: number }) {
   const cubies = useMemo(() => {
-    const r: { x: number; y: number; z: number; faces: Record<string, string> }[] = [];
-    for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
-      const faces: Record<string, string> = {};
-      if (y === 1) faces.top = '#ffffff';
-      if (y === -1) faces.bottom = '#ffd500';
-      if (z === 1) faces.front = '#c41e3a';
-      if (z === -1) faces.back = '#ff5800';
-      if (x === 1) faces.right = '#009e60';
-      if (x === -1) faces.left = '#0051ba';
-      r.push({ x, y, z, faces });
+    const r: { x: number; y: number; z: number; f: Record<string, string> }[] = [];
+    for (let x=-1;x<=1;x++) for (let y=-1;y<=1;y++) for (let z=-1;z<=1;z++) {
+      const f: Record<string, string> = {};
+      if (y===1) f.top='#fff'; if (y===-1) f.bottom='#ffd500'; if (z===1) f.front='#c41e3a';
+      if (z===-1) f.back='#ff5800'; if (x===1) f.right='#009e60'; if (x===-1) f.left='#0051ba';
+      r.push({ x, y, z, f });
     }
     return r;
   }, []);
-
   return (
     <div style={{ perspective: '600px', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ width: '120px', height: '120px', position: 'relative', transformStyle: 'preserve-3d', transform: `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`, transition: 'transform 0.1s ease-out' }}>
-        {cubies.map(({ x, y, z, faces }, i) => (
-          <div key={i} style={{ position: 'absolute', width: '36px', height: '36px', transformStyle: 'preserve-3d', transform: `translate3d(${x*38+42}px, ${-y*38+42}px, ${z*38}px)` }}>
-            {([['top','rotateX(90deg) translateZ(18px)'],['bottom','rotateX(-90deg) translateZ(18px)'],['front','translateZ(18px)'],['back','rotateY(180deg) translateZ(18px)'],['right','rotateY(90deg) translateZ(18px)'],['left','rotateY(-90deg) translateZ(18px)']] as [string,string][]).map(([f,tf]) => (
-              <div key={f} style={{ position: 'absolute', width: '36px', height: '36px', transform: tf, background: faces[f] || '#1a1a2e', border: '1.5px solid #0a0a1a', borderRadius: '3px', boxSizing: 'border-box' }} />
-            ))}
+      <div style={{ width: 120, height: 120, position: 'relative', transformStyle: 'preserve-3d', transform: `rotateX(${rx}deg) rotateY(${ry}deg)`, transition: 'transform 0.1s' }}>
+        {cubies.map(({ x, y, z, f }, i) => (
+          <div key={i} style={{ position: 'absolute', width: 36, height: 36, transformStyle: 'preserve-3d', transform: `translate3d(${x*38+42}px,${-y*38+42}px,${z*38}px)` }}>
+            {([['top','rotateX(90deg) translateZ(18px)'],['bottom','rotateX(-90deg) translateZ(18px)'],['front','translateZ(18px)'],['back','rotateY(180deg) translateZ(18px)'],['right','rotateY(90deg) translateZ(18px)'],['left','rotateY(-90deg) translateZ(18px)']] as [string,string][]).map(([k,t]) => <div key={k} style={{ position:'absolute', width:36, height:36, transform:t, background:f[k]||'#1a1a2e', border:'1.5px solid #0a0a1a', borderRadius:3, boxSizing:'border-box' }} />)}
           </div>
         ))}
       </div>
@@ -349,89 +252,83 @@ function Cube3D({ rotationX, rotationY }: { rotationX: number; rotationY: number
   );
 }
 
-// ── Main Component ──
+// ── Main ──
 export default function RubikCubeTrainer() {
-  const [currentCategory, setCurrentCategory] = useState('OLL');
-  const [currentFormula, setCurrentFormula] = useState<Formula | null>(null);
-  const [isPracticing, setIsPracticing] = useState(false);
-  const [userMoves, setUserMoves] = useState<string[]>([]);
-  const [wrongMoves, setWrongMoves] = useState<Set<number>>(new Set());
-  const [stats, setStats] = useState<Stats>({ correct: 0, wrong: 0, streak: 0, bestStreak: 0 });
+  const [cat, setCat] = useState('OLL');
+  const [formula, setFormula] = useState<Formula|null>(null);
+  const [practicing, setPracticing] = useState(false);
+  const [moves, setMoves] = useState<string[]>([]);
+  const [wrongs, setWrongs] = useState<Set<number>>(new Set());
+  const [stats, setStats] = useState<Stats>({ correct:0, wrong:0, streak:0, bestStreak:0 });
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [isConnected, setIsConnected] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('未连接');
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [cubeRotX, setCubeRotX] = useState(-25);
-  const [cubeRotY, setCubeRotY] = useState(35);
-  const [difficulty, setDifficulty] = useState('all');
-  const [highlightedStep, setHighlightedStep] = useState(-1);
-  const [lastMove, setLastMove] = useState<string | null>(null);
-  const [battery, setBattery] = useState<number | null>(null);
-  const [showSafariWarning, setShowSafariWarning] = useState(false);
+  const [time, setTime] = useState(0);
+  const [connected, setConnected] = useState(false);
+  const [connStatus, setConnStatus] = useState('未连接');
+  const [connecting, setConnecting] = useState(false);
+  const [rx, setRx] = useState(-25); const [ry, setRy] = useState(35);
+  const [diff, setDiff] = useState('all');
+  const [hlStep, setHlStep] = useState(-1);
+  const [lastMove, setLastMove] = useState<string|null>(null);
+  const [battery, setBattery] = useState<number|null>(null);
+  const [showSafari, setShowSafari] = useState(false);
 
-  const startTimeRef = useRef<number | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const logIdRef = useRef(0);
-  const isDragging = useRef(false);
-  const lastMouse = useRef({ x: 0, y: 0 });
-  const connectingRef = useRef(false);
+  const startRef = useRef<number|null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const logId = useRef(0);
+  const dragging = useRef(false);
+  const lastM = useRef({ x:0, y:0 });
+  const connLock = useRef(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const charRef = useRef<any>(null);
-  const cubeStateRef = useRef<number[]>([]);
+  const writeRef = useRef<any>(null);
+  const sessionToken = useRef<number[]>([]);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval>|null>(null);
 
-  const addLog = useCallback((message: string, type: LogEntry['type'] = 'info') => {
-    logIdRef.current++;
-    setLogs(prev => [{ id: logIdRef.current, time: new Date().toLocaleTimeString(), message, type }, ...prev].slice(0, 80));
+  const addLog = useCallback((msg: string, type: LogEntry['type']='info') => {
+    logId.current++;
+    setLogs(p => [{ id: logId.current, time: new Date().toLocaleTimeString(), message: msg, type }, ...p].slice(0, 80));
   }, []);
 
   const formulas = useMemo(() => {
-    const list = formulaLibrary[currentCategory] || [];
-    return difficulty === 'all' ? list : list.filter(f => f.difficulty === difficulty);
-  }, [currentCategory, difficulty]);
+    const l = formulaLibrary[cat] || [];
+    return diff === 'all' ? l : l.filter(f => f.difficulty === diff);
+  }, [cat, diff]);
 
-  // Handle cube move
-  const handleCubeMove = useCallback((move: string) => {
+  const handleMove = useCallback((move: string) => {
     setLastMove(move);
     addLog(`🎲 ${move}`, 'success');
-
-    if (currentFormula && isPracticing) {
-      const expectedMoves = currentFormula.formula.split(' ');
-      const idx = userMoves.length;
-      if (idx < expectedMoves.length) {
-        const expected = expectedMoves[idx].replace(/\s+/g, '').toUpperCase();
-        const actual = move.replace(/\s+/g, '').toUpperCase();
-        if (actual === expected) {
-          setStats(prev => { const ns = prev.streak + 1; return { correct: prev.correct + 1, wrong: prev.wrong, streak: ns, bestStreak: Math.max(prev.bestStreak, ns) }; });
-          addLog(`✅ 步骤${idx+1}: ${move}`, 'success');
-          setHighlightedStep(idx + 1);
+    if (formula && practicing) {
+      const expected = formula.formula.split(' ');
+      const idx = moves.length;
+      if (idx < expected.length) {
+        const exp = expected[idx].replace(/\s+/g, '').toUpperCase();
+        const act = move.replace(/\s+/g, '').toUpperCase();
+        if (act === exp) {
+          setStats(p => { const ns = p.streak+1; return { correct: p.correct+1, wrong: p.wrong, streak: ns, bestStreak: Math.max(p.bestStreak, ns) }; });
+          addLog(`✅ ${idx+1}: ${move}`, 'success'); setHlStep(idx+1);
         } else {
-          setStats(prev => ({ ...prev, wrong: prev.wrong + 1, streak: 0 }));
-          setWrongMoves(prev => new Set(prev).add(idx));
-          addLog(`❌ 期望 ${expectedMoves[idx]}，实际 ${move}`, 'error');
+          setStats(p => ({ ...p, wrong: p.wrong+1, streak: 0 }));
+          setWrongs(p => new Set(p).add(idx));
+          addLog(`❌ 期望${expected[idx]}，实际${move}`, 'error');
         }
-        setUserMoves(prev => [...prev, move]);
-        if (idx+1 === expectedMoves.length && actual === expected) {
-          const t = ((Date.now() - (startTimeRef.current||Date.now()))/1000).toFixed(1);
-          addLog(`🎉 完美完成！用时 ${t}s`, 'success');
-          setIsPracticing(false);
+        setMoves(p => [...p, move]);
+        if (idx+1 === expected.length && act === exp) {
+          const t = ((Date.now()-(startRef.current||Date.now()))/1000).toFixed(1);
+          addLog(`🎉 完成！${t}s`, 'success'); setPracticing(false);
           if (timerRef.current) clearInterval(timerRef.current);
         }
       }
     }
-  }, [currentFormula, isPracticing, userMoves, addLog]);
+  }, [formula, practicing, moves, addLog]);
 
-  // Connect to Qiyi cube using proper protocol
-  const connectCube = useCallback(async () => {
-    if (connectingRef.current) return;
-    connectingRef.current = true;
-    setIsConnecting(true);
+  // Connect Qiyi cube
+  const connect = useCallback(async () => {
+    if (connLock.current) return;
+    connLock.current = true; setConnecting(true);
 
-    const ua = navigator.userAgent;
-    const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
     if (!('bluetooth' in navigator)) {
-      addLog(isSafari ? '⚠️ Safari 不支持蓝牙，请用 Chrome/Edge' : '⚠️ 浏览器不支持 Web Bluetooth', 'error');
-      connectingRef.current = false; setIsConnecting(false); return;
+      const ua = navigator.userAgent;
+      addLog(/^((?!chrome|android).)*safari/i.test(ua) ? '⚠️ Safari不支持蓝牙，请用Chrome' : '⚠️ 不支持Web Bluetooth', 'error');
+      connLock.current = false; setConnecting(false); return;
     }
 
     addLog('🔍 搜索奇艺智能魔方...', 'info');
@@ -442,248 +339,230 @@ export default function RubikCubeTrainer() {
         filters: [{ namePrefix: 'QY' }],
         optionalServices: [QIYI_SERVICE],
       });
+      addLog(`📱 ${device.name}`, 'success');
 
-      addLog(`📱 找到: ${device.name}`, 'success');
       const server = await device.gatt.connect();
-      addLog('🔗 GATT 连接成功', 'info');
+      addLog('🔗 GATT OK', 'info');
 
       const service = await server.getPrimaryService(QIYI_SERVICE);
-      const char = await service.getCharacteristic(QIYI_CHAR_RW);
-      charRef.current = char;
-      addLog('✅ 获取 fff6 特征值 (READ+WRITE+NOTIFY)', 'success');
+
+      // Get write and notify characteristics (SEPARATE!)
+      const writeChar = await service.getCharacteristic(QIYI_CHAR_WRITE);
+      const notifyChar = await service.getCharacteristic(QIYI_CHAR_NOTIFY);
+      writeRef.current = writeChar;
+      addLog('✅ fff1(NOTIFY) + fff2(WRITE)', 'success');
 
       // Subscribe to notifications
-      char.addEventListener('characteristicvaluechanged', ((event: Event) => {
+      notifyChar.addEventListener('characteristicvaluechanged', ((event: Event) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const val = (event.target as any).value as DataView;
         if (!val) return;
         const raw = new Uint8Array(val.buffer);
-        const parsed = parseMessage(raw);
-        if (!parsed) return;
+        const hex = Array.from(raw).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        addLog(`📦 ${hex.slice(0, 40)}${hex.length > 40 ? '...' : ''}`, 'info');
 
-        if (parsed.opcode === 0x02) {
-          // Cube Hello - initial state
-          if (parsed.data.length >= 34) {
-            const stateBytes = Array.from(parsed.data.slice(5, 32));
-            cubeStateRef.current = stateBytes.reduce((acc: number[], b) => { acc.push(b & 0x0F, (b >> 4) & 0x0F); return acc; }, []);
-            const batt = parsed.data[33];
-            setBattery(batt);
-            addLog(`🧊 魔方状态已同步 (电量: ${batt}%)`, 'success');
+        const parsed = parseFrame(raw);
+        if (!parsed) { addLog('⚠️ 解析失败', 'warning'); return; }
 
-            // Send ACK
-            const ackPayload = [0x01, parsed.data[1], parsed.data[2], parsed.data[3], parsed.data[4]];
-            const ackMsg = buildMessage(ackPayload);
-            char.writeValue(ackMsg).catch(() => {});
-            addLog('📤 ACK 已发送', 'info');
+        addLog(`CMD=0x${parsed.cmd.toString(16).padStart(2,'0')} payload=${parsed.payload.length}B`, 'info');
+
+        if (parsed.cmd === 0x02) {
+          // Activate response → extract session token (first 4 bytes of decrypted payload)
+          sessionToken.current = Array.from(parsed.payload.slice(0, 4));
+          const tokenHex = sessionToken.current.map(b => b.toString(16).padStart(2, '0')).join(' ');
+          addLog(`🔑 Token: ${tokenHex}`, 'success');
+
+          // Send state sync (cmd 0x04 with token)
+          const syncFrame = buildEncryptedFrame(0x04, sessionToken.current);
+          writeChar.writeValue(syncFrame).then(() => addLog('📤 状态同步已发送', 'info')).catch((e: unknown) => addLog(`❌ 同步失败: ${e}`, 'error'));
+        } else if (parsed.cmd === 0x05) {
+          // State sync response → 54 bytes of piece state
+          addLog(`🧊 魔方状态已同步 (${parsed.payload.length}B)`, 'success');
+        } else if (parsed.cmd === 0x06) {
+          // Move notification → [timestamp:4B][face:1B][direction:1B]
+          if (parsed.payload.length >= 6) {
+            const face = parsed.payload[4];
+            const dir = parsed.payload[5];
+            const faceStr = FACES[face] || '?';
+            const dirStr = DIRS[dir] || '';
+            handleMove(faceStr + dirStr);
           }
-        } else if (parsed.opcode === 0x03) {
-          // State Change - move detected
-          if (parsed.data.length >= 33) {
-            const moveByte = parsed.data[32];
-            const move = MOVE_TABLE[moveByte];
-            if (move) handleCubeMove(move);
-
-            // Update cube state
-            const stateBytes = Array.from(parsed.data.slice(5, 32));
-            cubeStateRef.current = stateBytes.reduce((acc: number[], b) => { acc.push(b & 0x0F, (b >> 4) & 0x0F); return acc; }, []);
-            const batt = parsed.data[33];
-            if (batt !== undefined) setBattery(batt);
-
-            // Check if ACK needed
-            if (parsed.data.length >= 90 && parsed.data[89] === 1) {
-              const ackPayload = [0x01, parsed.data[1], parsed.data[2], parsed.data[3], parsed.data[4]];
-              const ackMsg = buildMessage(ackPayload);
-              char.writeValue(ackMsg).catch(() => {});
-            }
+        } else if (parsed.cmd === 0x0A) {
+          // Battery response
+          if (parsed.payload.length >= 2) {
+            setBattery(parsed.payload[1]);
+            addLog(`🔋 电量: ${parsed.payload[1]}%`, 'info');
           }
         }
       }) as EventListener);
 
-      await char.startNotifications();
-      addLog('🔔 已订阅 fff6 通知', 'success');
+      await notifyChar.startNotifications();
+      addLog('🔔 订阅 fff1 通知', 'success');
 
-      // Send App Hello to initiate handshake
-      // Build hello: [0xFE, 0x15, 0x00, 11 zeros, 6 bytes MAC (reversed)]
-      // Since we don't know the MAC, send with zeros (cube should still respond)
-      const helloPayload = new Array(17).fill(0x00);
-      const helloMsg = buildMessage(helloPayload);
-      await char.writeValue(helloMsg);
-      addLog('📤 App Hello 已发送，等待魔方响应...', 'info');
+      // Send activate command (cmd 0x01, data 01 00 01)
+      const activateFrame = buildFrame(0x01, [0x01, 0x00, 0x01]);
+      await writeChar.writeValue(activateFrame);
+      addLog('📤 激活命令已发送 (cmd=0x01)', 'success');
 
-      setIsConnected(true);
-      setConnectionStatus(`已连接: ${device.name}`);
-      addLog('✅ 连接完成！转动魔方观察数据', 'success');
+      // Start heartbeat (cmd 0x08) every 2 seconds
+      heartbeatRef.current = setInterval(() => {
+        if (writeRef.current) {
+          const hb = buildFrame(0x08, []);
+          writeRef.current.writeValue(hb).catch(() => {});
+        }
+      }, 2000);
+      addLog('💓 心跳已启动 (2s)', 'info');
+
+      // Query battery
+      const battFrame = buildFrame(0x0A, []);
+      await writeChar.writeValue(battFrame);
+
+      setConnected(true);
+      setConnStatus(`已连接: ${device.name}`);
+      addLog('✅ 连接完成，转动魔方！', 'success');
 
       device.addEventListener('gattserverdisconnected', () => {
-        setIsConnected(false); setConnectionStatus('已断开'); charRef.current = null; setBattery(null);
-        addLog('🔌 魔方已断开', 'warning');
+        setConnected(false); setConnStatus('已断开'); writeRef.current = null; setBattery(null);
+        if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+        addLog('🔌 已断开', 'warning');
       });
 
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '未知错误';
-      if (msg.includes('cancelled')) addLog('用户取消', 'info');
-      else addLog(`❌ ${msg}`, 'error');
+      addLog(msg.includes('cancelled') ? '用户取消' : `❌ ${msg}`, 'error');
     } finally {
-      connectingRef.current = false;
-      setIsConnecting(false);
+      connLock.current = false; setConnecting(false);
     }
-  }, [addLog, handleCubeMove]);
+  }, [addLog, handleMove]);
 
-  // Select formula
   const selectFormula = useCallback((id: string) => {
     const f = formulas.find(x => x.id === id);
-    if (f) { setCurrentFormula(f); setUserMoves([]); setWrongMoves(new Set()); setHighlightedStep(-1); addLog(`选择: ${f.id}`, 'info'); }
+    if (f) { setFormula(f); setMoves([]); setWrongs(new Set()); setHlStep(-1); addLog(`选择: ${f.id}`, 'info'); }
   }, [formulas, addLog]);
 
   const startPractice = useCallback(() => {
-    if (!currentFormula) { addLog('请先选择公式', 'error'); return; }
-    setIsPracticing(true); setUserMoves([]); setWrongMoves(new Set()); setHighlightedStep(0);
-    setStats({ correct: 0, wrong: 0, streak: 0, bestStreak: 0 }); setElapsedTime(0);
-    startTimeRef.current = Date.now(); addLog(`开始: ${currentFormula.id}`, 'success');
-    timerRef.current = setInterval(() => { if (startTimeRef.current) setElapsedTime(parseFloat(((Date.now()-startTimeRef.current)/1000).toFixed(1))); }, 100);
-  }, [currentFormula, addLog]);
+    if (!formula) { addLog('请先选择公式', 'error'); return; }
+    setPracticing(true); setMoves([]); setWrongs(new Set()); setHlStep(0);
+    setStats({ correct:0, wrong:0, streak:0, bestStreak:0 }); setTime(0);
+    startRef.current = Date.now(); addLog(`开始: ${formula.id}`, 'success');
+    timerRef.current = setInterval(() => { if (startRef.current) setTime(parseFloat(((Date.now()-startRef.current)/1000).toFixed(1))); }, 100);
+  }, [formula, addLog]);
 
   const resetPractice = useCallback(() => {
-    setIsPracticing(false); setUserMoves([]); setWrongMoves(new Set()); setHighlightedStep(-1);
-    setStats({ correct: 0, wrong: 0, streak: 0, bestStreak: 0 }); setElapsedTime(0);
-    startTimeRef.current = null; if (timerRef.current) clearInterval(timerRef.current); addLog('已重置', 'info');
+    setPracticing(false); setMoves([]); setWrongs(new Set()); setHlStep(-1);
+    setStats({ correct:0, wrong:0, streak:0, bestStreak:0 }); setTime(0);
+    startRef.current = null; if (timerRef.current) clearInterval(timerRef.current); addLog('已重置', 'info');
   }, [addLog]);
 
-  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); if (heartbeatRef.current) clearInterval(heartbeatRef.current); }, []);
+  useEffect(() => { if (typeof window !== 'undefined' && /^((?!chrome|android).)*safari/i.test(navigator.userAgent) && !('bluetooth' in navigator)) setShowSafari(true); }, []);
 
-  // Detect Safari (client-side only)
-  useEffect(() => {
-    const ua = navigator.userAgent;
-    const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
-    if (isSafari && !('bluetooth' in navigator)) setShowSafariWarning(true);
-  }, []);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => { isDragging.current = true; lastMouse.current = { x: e.clientX, y: e.clientY }; }, []);
-  const handleMouseMove = useCallback((e: React.MouseEvent) => { if (!isDragging.current) return; setCubeRotY(p => p + (e.clientX - lastMouse.current.x)*0.5); setCubeRotX(p => p - (e.clientY - lastMouse.current.y)*0.5); lastMouse.current = { x: e.clientX, y: e.clientY }; }, []);
-  const handleMouseUp = useCallback(() => { isDragging.current = false; }, []);
-
-  const progress = currentFormula ? (userMoves.length / currentFormula.formula.split(' ').length) * 100 : 0;
+  const progress = formula ? (moves.length / formula.formula.split(' ').length) * 100 : 0;
   const allMoves = ["U","U'","U2","D","D'","D2","R","R'","R2","L","L'","L2","F","F'","F2","B","B'","B2"];
 
   return (
     <div style={S.page}>
-      {showSafariWarning && <div style={{ background:'rgba(245,158,11,0.1)', borderBottom:'1px solid rgba(245,158,11,0.2)', padding:'10px 16px', textAlign:'center', fontSize:'13px', color:'#fbbf24' }}>⚠️ Safari 不支持蓝牙，请用 Chrome/Edge</div>}
+      {showSafari && <div style={{ background:'rgba(245,158,11,0.1)', borderBottom:'1px solid rgba(245,158,11,0.2)', padding:'10px 16px', textAlign:'center', fontSize:13, color:'#fbbf24' }}>⚠️ Safari不支持蓝牙，请用Chrome/Edge</div>}
 
       <header style={{ padding:'20px 24px 12px' }}>
-        <div style={{ maxWidth:'1400px', margin:'0 auto', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <div style={{ maxWidth:1400, margin:'0 auto', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div>
-            <h1 style={{ fontSize:'26px', fontWeight:700, margin:0, background:'linear-gradient(135deg, #22d3ee, #3b82f6, #a855f7)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>🎲 魔方速拧公式训练</h1>
-            <p style={{ fontSize:'12px', color:'#64748b', margin:'4px 0 0' }}>CFOP · OLL · PLL · F2L · 奇艺智能魔方 BLE 协议</p>
+            <h1 style={{ fontSize:26, fontWeight:700, margin:0, background:'linear-gradient(135deg,#22d3ee,#3b82f6,#a855f7)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>🎲 魔方速拧公式训练</h1>
+            <p style={{ fontSize:12, color:'#64748b', margin:'4px 0 0' }}>CFOP · 奇艺智能魔方 BLE 协议</p>
           </div>
-          <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
-            {lastMove && <div style={{ ...S.mono, fontSize:'20px', fontWeight:700, color:'#22d3ee', padding:'4px 12px', background:'rgba(34,211,238,0.1)', borderRadius:'8px', border:'1px solid rgba(34,211,238,0.2)' }}>{lastMove}</div>}
-            {battery !== null && <div style={{ fontSize:'12px', color:'#94a3b8', padding:'4px 10px', background:'rgba(255,255,255,0.04)', borderRadius:'12px', border:'1px solid rgba(255,255,255,0.08)' }}>🔋 {battery}%</div>}
-            <div style={{ display:'flex', alignItems:'center', gap:'6px', padding:'6px 12px', borderRadius:'20px', fontSize:'12px', background:isConnected?'rgba(74,222,128,0.1)':'rgba(255,255,255,0.04)', border:`1px solid ${isConnected?'rgba(74,222,128,0.3)':'rgba(255,255,255,0.08)'}`, color:isConnected?'#4ade80':'#64748b' }}>
-              <span style={{ width:'8px', height:'8px', borderRadius:'50%', background:isConnected?'#4ade80':'#475569', animation:isConnected?'pulse 2s infinite':'none' }} />
-              {connectionStatus}
+          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+            {lastMove && <div style={{ ...S.mono, fontSize:20, fontWeight:700, color:'#22d3ee', padding:'4px 12px', background:'rgba(34,211,238,0.1)', borderRadius:8, border:'1px solid rgba(34,211,238,0.2)' }}>{lastMove}</div>}
+            {battery !== null && <div style={{ fontSize:12, color:'#94a3b8', padding:'4px 10px', background:'rgba(255,255,255,0.04)', borderRadius:12 }}>🔋 {battery}%</div>}
+            <div style={{ display:'flex', alignItems:'center', gap:6, padding:'6px 12px', borderRadius:20, fontSize:12, background:connected?'rgba(74,222,128,0.1)':'rgba(255,255,255,0.04)', border:`1px solid ${connected?'rgba(74,222,128,0.3)':'rgba(255,255,255,0.08)'}`, color:connected?'#4ade80':'#64748b' }}>
+              <span style={{ width:8, height:8, borderRadius:'50%', background:connected?'#4ade80':'#475569', animation:connected?'pulse 2s infinite':'none' }} />
+              {connStatus}
             </div>
           </div>
         </div>
       </header>
 
-      <main style={{ maxWidth:'1400px', margin:'0 auto', padding:'0 24px 24px', display:'grid', gridTemplateColumns:'280px 1fr 360px', gap:'16px' }}>
-        {/* Left: Formula Library */}
+      <main style={{ maxWidth:1400, margin:'0 auto', padding:'0 24px 24px', display:'grid', gridTemplateColumns:'280px 1fr 360px', gap:16 }}>
+        {/* Left */}
         <div style={{ ...S.glass, overflow:'hidden', display:'flex', flexDirection:'column' }}>
-          <div style={{ padding:'16px', borderBottom:'1px solid rgba(255,255,255,0.06)' }}><h2 style={{ fontSize:'15px', fontWeight:600, margin:0 }}>📚 公式库</h2></div>
-          <div style={{ display:'flex', gap:'4px', padding:'10px 12px', borderBottom:'1px solid rgba(255,255,255,0.06)' }}>
-            {Object.keys(formulaLibrary).map(cat => <button key={cat} onClick={() => { setCurrentCategory(cat); setCurrentFormula(null); setUserMoves([]); }} style={S.btn(currentCategory===cat)}>{cat}</button>)}
+          <div style={{ padding:16, borderBottom:'1px solid rgba(255,255,255,0.06)' }}><h2 style={{ fontSize:15, fontWeight:600, margin:0 }}>📚 公式库</h2></div>
+          <div style={{ display:'flex', gap:4, padding:'10px 12px', borderBottom:'1px solid rgba(255,255,255,0.06)' }}>
+            {Object.keys(formulaLibrary).map(c => <button key={c} onClick={() => { setCat(c); setFormula(null); setMoves([]); }} style={S.btn(cat===c)}>{c}</button>)}
           </div>
-          <div style={{ display:'flex', gap:'4px', padding:'8px 12px', borderBottom:'1px solid rgba(255,255,255,0.06)' }}>
-            {['all','beginner','intermediate','advanced'].map(d => <button key={d} onClick={() => setDifficulty(d)} style={{ ...S.btnSm, background:difficulty===d?'rgba(255,255,255,0.1)':'transparent', color:difficulty===d?'#e2e8f0':'#64748b' }}>{d==='all'?'全部':diffMeta(d).label}</button>)}
+          <div style={{ display:'flex', gap:4, padding:'8px 12px', borderBottom:'1px solid rgba(255,255,255,0.06)' }}>
+            {['all','beginner','intermediate','advanced'].map(d => <button key={d} onClick={() => setDiff(d)} style={{ ...S.btnSm, background:diff===d?'rgba(255,255,255,0.1)':'transparent', color:diff===d?'#e2e8f0':'#64748b' }}>{d==='all'?'全部':diffMeta(d).label}</button>)}
           </div>
           <div style={{ flex:1, overflow:'auto', padding:'6px 8px' }}>
             {formulas.map(f => { const dm = diffMeta(f.difficulty); return (
-              <div key={f.id} onClick={() => selectFormula(f.id)} style={{ padding:'10px 12px', marginBottom:'2px', borderRadius:'10px', cursor:'pointer', transition:'all 0.15s', background:currentFormula?.id===f.id?'rgba(6,182,212,0.1)':'transparent', border:currentFormula?.id===f.id?'1px solid rgba(6,182,212,0.3)':'1px solid transparent' }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'4px' }}>
-                  <span style={{ fontSize:'12px', fontWeight:600, color:'#22d3ee' }}>{f.id}</span>
-                  {f.difficulty && <span style={{ fontSize:'10px', padding:'2px 6px', borderRadius:'4px', background:dm.bg, color:dm.color }}>{dm.label}</span>}
-                </div>
-                <div style={{ ...S.mono, fontSize:'13px', color:'#fbbf24', lineHeight:1.6 }}>{f.formula}</div>
-                <div style={{ fontSize:'11px', color:'#64748b', marginTop:'2px' }}>{f.name} · {f.description}</div>
+              <div key={f.id} onClick={() => selectFormula(f.id)} style={{ padding:'10px 12px', marginBottom:2, borderRadius:10, cursor:'pointer', background:formula?.id===f.id?'rgba(6,182,212,0.1)':'transparent', border:formula?.id===f.id?'1px solid rgba(6,182,212,0.3)':'1px solid transparent' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}><span style={{ fontSize:12, fontWeight:600, color:'#22d3ee' }}>{f.id}</span>{f.difficulty && <span style={{ fontSize:10, padding:'2px 6px', borderRadius:4, background:dm.bg, color:dm.color }}>{dm.label}</span>}</div>
+                <div style={{ ...S.mono, fontSize:13, color:'#fbbf24' }}>{f.formula}</div>
+                <div style={{ fontSize:11, color:'#64748b', marginTop:2 }}>{f.name} · {f.description}</div>
               </div>
             ); })}
-            {formulas.length===0 && <div style={{ textAlign:'center', color:'#475569', padding:'32px 0', fontSize:'13px' }}>该难度暂无公式</div>}
           </div>
         </div>
 
-        {/* Center: 3D + Manual */}
-        <div style={{ display:'flex', flexDirection:'column', gap:'16px' }}>
+        {/* Center */}
+        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
           <div style={S.glass}>
-            <div style={{ padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,0.06)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-              <span style={{ fontSize:'13px', color:'#94a3b8' }}>3D 魔方预览</span>
-              <div style={{ display:'flex', gap:'4px' }}>
-                {['U','D','R','L','F','B'].map(face => <button key={face} onClick={() => { const m:Record<string,[number,number]>={U:[0,90],D:[0,-90],R:[90,0],L:[-90,0],F:[0,0],B:[180,0]}; const [dx,dy]=m[face]; setCubeRotX(p=>p+dx*0.3); setCubeRotY(p=>p+dy*0.3); }} style={{ ...S.btnSm, width:'28px', height:'28px', padding:0, display:'flex', alignItems:'center', justifyContent:'center', ...S.mono }}>{face}</button>)}
+            <div style={{ padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,0.06)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <span style={{ fontSize:13, color:'#94a3b8' }}>3D 预览</span>
+              <div style={{ display:'flex', gap:4 }}>
+                {['U','D','R','L','F','B'].map(f => <button key={f} onClick={() => { const m:Record<string,[number,number]>={U:[0,90],D:[0,-90],R:[90,0],L:[-90,0],F:[0,0],B:[180,0]}; const [dx,dy]=m[f]; setRx(p=>p+dx*0.3); setRy(p=>p+dy*0.3); }} style={{ ...S.btnSm, width:28, height:28, padding:0, display:'flex', alignItems:'center', justifyContent:'center', ...S.mono }}>{f}</button>)}
               </div>
             </div>
-            <div style={{ height:'300px', cursor:'grab', userSelect:'none' }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
-              <Cube3D rotationX={cubeRotX} rotationY={cubeRotY} />
+            <div style={{ height:300, cursor:'grab', userSelect:'none' }} onMouseDown={e => { dragging.current=true; lastM.current={x:e.clientX,y:e.clientY}; }} onMouseMove={e => { if (!dragging.current) return; setRy(p=>p+(e.clientX-lastM.current.x)*0.5); setRx(p=>p-(e.clientY-lastM.current.y)*0.5); lastM.current={x:e.clientX,y:e.clientY}; }} onMouseUp={() => dragging.current=false} onMouseLeave={() => dragging.current=false}>
+              <Cube3D rx={rx} ry={ry} />
             </div>
-            <div style={{ padding:'0 16px 8px', textAlign:'center' }}><p style={{ fontSize:'11px', color:'#334155', margin:0 }}>拖拽旋转 · 点击面按钮切换视角</p></div>
           </div>
-          <div style={{ ...S.glass, padding:'16px' }}>
-            <h3 style={{ fontSize:'13px', fontWeight:600, color:'#94a3b8', margin:'0 0 8px' }}>🎮 手动录入</h3>
-            <p style={{ fontSize:'11px', color:'#475569', margin:'0 0 12px' }}>{isConnected ? '已连接，转动魔方自动录入' : '手动点击按钮录入操作'}</p>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:'6px' }}>
-              {allMoves.map(move => <button key={move} onClick={() => handleCubeMove(move)} disabled={!isPracticing && !isConnected} style={{ ...S.mono, padding:'10px 0', fontSize:'13px', fontWeight:600, borderRadius:'8px', border:'none', cursor:(!isPracticing&&!isConnected)?'not-allowed':'pointer', opacity:(!isPracticing&&!isConnected)?0.3:1, background:'rgba(255,255,255,0.06)', color:'#e2e8f0', transition:'all 0.1s' }}>{move}</button>)}
+          <div style={{ ...S.glass, padding:16 }}>
+            <h3 style={{ fontSize:13, fontWeight:600, color:'#94a3b8', margin:'0 0 8px' }}>🎮 手动录入</h3>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:6 }}>
+              {allMoves.map(m => <button key={m} onClick={() => handleMove(m)} disabled={!practicing && !connected} style={{ ...S.mono, padding:'10px 0', fontSize:13, fontWeight:600, borderRadius:8, border:'none', cursor:(!practicing&&!connected)?'not-allowed':'pointer', opacity:(!practicing&&!connected)?0.3:1, background:'rgba(255,255,255,0.06)', color:'#e2e8f0' }}>{m}</button>)}
             </div>
           </div>
         </div>
 
-        {/* Right: Practice */}
-        <div style={{ display:'flex', flexDirection:'column', gap:'16px' }}>
-          <div style={{ ...S.glass, padding:'14px 16px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-            <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
-              <span style={{ width:'10px', height:'10px', borderRadius:'50%', background:isConnected?'#4ade80':isConnecting?'#fbbf24':'#475569', animation:(isConnected||isConnecting)?'pulse 2s infinite':'none' }} />
-              <span style={{ fontSize:'13px', color:'#94a3b8' }}>{connectionStatus}</span>
+        {/* Right */}
+        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+          <div style={{ ...S.glass, padding:'14px 16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+              <span style={{ width:10, height:10, borderRadius:'50%', background:connected?'#4ade80':connecting?'#fbbf24':'#475569', animation:(connected||connecting)?'pulse 2s infinite':'none' }} />
+              <span style={{ fontSize:13, color:'#94a3b8' }}>{connStatus}</span>
             </div>
-            <button onClick={connectCube} disabled={isConnecting} style={{ padding:'8px 20px', fontSize:'13px', fontWeight:600, borderRadius:'10px', border:'none', cursor:isConnecting?'wait':'pointer', background:isConnecting?'rgba(107,114,128,0.3)':'linear-gradient(135deg, #06b6d4, #3b82f6)', color:'#fff', transition:'all 0.15s' }}>
-              {isConnecting ? '搜索中...' : isConnected ? '已连接' : '🔗 连接魔方'}
-            </button>
+            <button onClick={connect} disabled={connecting} style={{ padding:'8px 20px', fontSize:13, fontWeight:600, borderRadius:10, border:'none', cursor:connecting?'wait':'pointer', background:connecting?'rgba(107,114,128,0.3)':'linear-gradient(135deg,#06b6d4,#3b82f6)', color:'#fff' }}>{connecting?'搜索中...':connected?'已连接':'🔗 连接魔方'}</button>
           </div>
 
-          <div style={{ ...S.glass, padding:'20px' }}>
-            <h2 style={{ fontSize:'16px', fontWeight:600, margin:'0 0 16px' }}>🎯 练习模式</h2>
-            {currentFormula ? (<>
-              <div style={{ ...S.card, padding:'14px', marginBottom:'16px' }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'6px' }}>
-                  <span style={{ fontSize:'13px', fontWeight:600, color:'#22d3ee' }}>{currentFormula.id}: {currentFormula.name}</span>
-                  {currentFormula.difficulty && (() => { const dm = diffMeta(currentFormula.difficulty); return <span style={{ fontSize:'10px', padding:'2px 8px', borderRadius:'10px', background:dm.bg, color:dm.color }}>{dm.label}</span>; })()}
+          <div style={{ ...S.glass, padding:20 }}>
+            <h2 style={{ fontSize:16, fontWeight:600, margin:'0 0 16px' }}>🎯 练习</h2>
+            {formula ? (<>
+              <div style={{ ...S.card, padding:14, marginBottom:16 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+                  <span style={{ fontSize:13, fontWeight:600, color:'#22d3ee' }}>{formula.id}: {formula.name}</span>
+                  {formula.difficulty && (() => { const dm=diffMeta(formula.difficulty); return <span style={{ fontSize:10, padding:'2px 8px', borderRadius:10, background:dm.bg, color:dm.color }}>{dm.label}</span>; })()}
                 </div>
-                <div style={{ ...S.mono, fontSize:'18px', color:'#fbbf24', letterSpacing:'1.5px', lineHeight:1.8 }}>{currentFormula.formula}</div>
-                <div style={{ fontSize:'11px', color:'#64748b', marginTop:'6px' }}>{currentFormula.description}</div>
+                <div style={{ ...S.mono, fontSize:18, color:'#fbbf24', letterSpacing:1.5 }}>{formula.formula}</div>
+                <div style={{ fontSize:11, color:'#64748b', marginTop:6 }}>{formula.description}</div>
               </div>
-              <div style={{ display:'flex', flexWrap:'wrap', gap:'5px', marginBottom:'14px' }}>
-                {currentFormula.formula.split(' ').map((move,i) => { const isDone=i<userMoves.length; const isW=wrongMoves.has(i); const isC=i===highlightedStep&&isPracticing; return (
-                  <span key={i} style={{ ...S.mono, display:'inline-flex', alignItems:'center', justifyContent:'center', width:'40px', height:'40px', fontSize:'13px', fontWeight:700, borderRadius:'8px', transition:'all 0.2s', background:isC?'#06b6d4':isDone&&!isW?'rgba(74,222,128,0.7)':isW?'rgba(248,113,113,0.7)':'rgba(255,255,255,0.06)', color:isC||isDone?'#fff':'#94a3b8', boxShadow:isC?'0 0 12px rgba(6,182,212,0.4)':'none', transform:isC?'scale(1.1)':'scale(1)' }}>{move}</span>
-                ); })}
+              <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginBottom:14 }}>
+                {formula.formula.split(' ').map((m,i) => { const done=i<moves.length; const w=wrongs.has(i); const c=i===hlStep&&practicing; return <span key={i} style={{ ...S.mono, display:'inline-flex', alignItems:'center', justifyContent:'center', width:40, height:40, fontSize:13, fontWeight:700, borderRadius:8, transition:'all 0.2s', background:c?'#06b6d4':done&&!w?'rgba(74,222,128,0.7)':w?'rgba(248,113,113,0.7)':'rgba(255,255,255,0.06)', color:c||done?'#fff':'#94a3b8', boxShadow:c?'0 0 12px rgba(6,182,212,0.4)':'none', transform:c?'scale(1.1)':'scale(1)' }}>{m}</span>; })}
               </div>
-              <div style={{ width:'100%', height:'6px', background:'rgba(255,255,255,0.06)', borderRadius:'3px', marginBottom:'16px', overflow:'hidden' }}>
-                <div style={{ height:'100%', background:'linear-gradient(90deg,#06b6d4,#4ade80)', borderRadius:'3px', transition:'width 0.3s', width:`${progress}%` }} />
-              </div>
-            </>) : <div style={{ textAlign:'center', padding:'40px 0', color:'#475569' }}><div style={{ fontSize:'36px', marginBottom:'8px' }}>👆</div><p style={{ fontSize:'13px', margin:0 }}>选择公式开始练习</p></div>}
-            <div style={{ display:'flex', gap:'10px' }}>
-              <button onClick={startPractice} disabled={!currentFormula||isPracticing} style={{ flex:1, padding:'12px', fontSize:'14px', fontWeight:600, borderRadius:'12px', border:'none', cursor:(!currentFormula||isPracticing)?'not-allowed':'pointer', opacity:(!currentFormula||isPracticing)?0.4:1, background:'linear-gradient(135deg,#06b6d4,#3b82f6)', color:'#fff' }}>{isPracticing?'练习中...':'▶ 开始练习'}</button>
-              <button onClick={resetPractice} style={{ padding:'12px 20px', fontSize:'14px', fontWeight:600, borderRadius:'12px', border:'1px solid rgba(255,255,255,0.08)', background:'rgba(255,255,255,0.04)', color:'#94a3b8', cursor:'pointer' }}>↺ 重置</button>
+              <div style={{ width:'100%', height:6, background:'rgba(255,255,255,0.06)', borderRadius:3, marginBottom:16, overflow:'hidden' }}><div style={{ height:'100%', background:'linear-gradient(90deg,#06b6d4,#4ade80)', borderRadius:3, transition:'width 0.3s', width:`${progress}%` }} /></div>
+            </>) : <div style={{ textAlign:'center', padding:'40px 0', color:'#475569' }}><div style={{ fontSize:36, marginBottom:8 }}>👆</div><p style={{ fontSize:13 }}>选择公式开始</p></div>}
+            <div style={{ display:'flex', gap:10 }}>
+              <button onClick={startPractice} disabled={!formula||practicing} style={{ flex:1, padding:12, fontSize:14, fontWeight:600, borderRadius:12, border:'none', cursor:(!formula||practicing)?'not-allowed':'pointer', opacity:(!formula||practicing)?0.4:1, background:'linear-gradient(135deg,#06b6d4,#3b82f6)', color:'#fff' }}>{practicing?'练习中...':'▶ 开始'}</button>
+              <button onClick={resetPractice} style={{ padding:'12px 20px', fontSize:14, fontWeight:600, borderRadius:12, border:'1px solid rgba(255,255,255,0.08)', background:'rgba(255,255,255,0.04)', color:'#94a3b8', cursor:'pointer' }}>↺</button>
             </div>
           </div>
 
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'10px' }}>
-            {[{l:'正确',v:stats.correct,c:'#22d3ee'},{l:'错误',v:stats.wrong,c:'#f87171'},{l:'用时',v:`${elapsedTime}s`,c:'#fbbf24'},{l:'连击',v:stats.streak,c:'#4ade80'}].map(({l,v,c}) => (
-              <div key={l} style={{ ...S.glass, padding:'12px', textAlign:'center' }}><div style={{ fontSize:'22px', fontWeight:700, color:c }}>{v}</div><div style={{ fontSize:'11px', color:'#64748b', marginTop:'2px' }}>{l}</div></div>
-            ))}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10 }}>
+            {[{l:'正确',v:stats.correct,c:'#22d3ee'},{l:'错误',v:stats.wrong,c:'#f87171'},{l:'用时',v:`${time}s`,c:'#fbbf24'},{l:'连击',v:stats.streak,c:'#4ade80'}].map(({l,v,c}) => <div key={l} style={{ ...S.glass, padding:12, textAlign:'center' }}><div style={{ fontSize:22, fontWeight:700, color:c }}>{v}</div><div style={{ fontSize:11, color:'#64748b', marginTop:2 }}>{l}</div></div>)}
           </div>
 
           <div style={{ ...S.glass, overflow:'hidden', flex:1, minHeight:0 }}>
-            <div style={{ padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,0.06)' }}><h3 style={{ fontSize:'13px', fontWeight:600, color:'#94a3b8', margin:0 }}>📋 操作日志</h3></div>
-            <div style={{ padding:'8px 12px', maxHeight:'160px', overflowY:'auto' }}>
-              {logs.length===0 ? <div style={{ textAlign:'center', color:'#334155', padding:'16px 0', fontSize:'12px' }}>暂无日志</div> :
-                logs.map(log => <div key={log.id} style={{ ...S.mono, fontSize:'11px', padding:'2px 0', color:log.type==='success'?'#4ade80':log.type==='error'?'#f87171':log.type==='warning'?'#fbbf24':'#64748b' }}><span style={{ color:'#334155' }}>[{log.time}]</span> {log.message}</div>)
-              }
+            <div style={{ padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,0.06)' }}><h3 style={{ fontSize:13, fontWeight:600, color:'#94a3b8', margin:0 }}>📋 日志</h3></div>
+            <div style={{ padding:'8px 12px', maxHeight:160, overflowY:'auto' }}>
+              {logs.map(l => <div key={l.id} style={{ ...S.mono, fontSize:11, padding:'2px 0', color:l.type==='success'?'#4ade80':l.type==='error'?'#f87171':l.type==='warning'?'#fbbf24':'#64748b' }}><span style={{ color:'#334155' }}>[{l.time}]</span> {l.message}</div>)}
             </div>
           </div>
         </div>
