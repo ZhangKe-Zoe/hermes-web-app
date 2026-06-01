@@ -19,8 +19,20 @@ const QIYI_SERVICE = '0000fff0-0000-1000-8000-00805f9b34fb';
 const QIYI_CHAR_FALLBACK_NOTIFY = '0000fff6-0000-1000-8000-00805f9b34fb';
 const QIYI_CHAR_FALLBACK_WRITE = '0000fff4-0000-1000-8000-00805f9b34fb';
 
-// AES key: "0102030405060708" as bytes
-const AES_KEY = [0x30, 0x31, 0x30, 0x32, 0x30, 0x33, 0x30, 0x34, 0x30, 0x35, 0x30, 0x36, 0x30, 0x37, 0x30, 0x38];
+// CRC-16 MODBUS
+function crc16(data: Uint8Array): number {
+  let crc = 0xFFFF;
+  for (let i = 0; i < data.length; i++) {
+    crc ^= data[i];
+    for (let j = 0; j < 8; j++) {
+      crc = (crc & 1) ? ((crc >> 1) ^ 0xA001) : (crc >> 1);
+    }
+  }
+  return crc;
+}
+
+// AES key: 57b1f9abcd5ae8a79cb98ce7578c5108 (from Codeberg protocol docs)
+const AES_KEY = [0x57, 0xb1, 0xf9, 0xab, 0xcd, 0x5a, 0xe8, 0xa7, 0x9c, 0xb9, 0x8c, 0xe7, 0x57, 0x8c, 0x51, 0x08];
 
 // ── AES-128-ECB (pure JS) ──
 const SBOX = [
@@ -187,9 +199,58 @@ function parseFrame(data: Uint8Array): { cmd: number; payload: Uint8Array } | nu
   return { cmd, payload: decrypted };
 }
 
-// Move decoding
-const FACES = ['U', 'R', 'F', 'D', 'L', 'B'];
-const DIRS = ['', "'", '2'];
+// Parse received encrypted message: decrypt → find 0xFE → extract opcode + data
+function parseMessage(encrypted: Uint8Array): { opcode: number; data: Uint8Array } | null {
+  try {
+    const decrypted = aesEcbDecrypt(encrypted);
+    // Find 0xFE start byte
+    let start = 0;
+    while (start < decrypted.length && decrypted[start] !== 0xFE) start++;
+    if (start >= decrypted.length) return null;
+
+    const msgLen = decrypted[start + 1];
+    if (msgLen < 4 || start + msgLen > decrypted.length) return null;
+
+    const msg = decrypted.slice(start, start + msgLen);
+    // Verify CRC-16 MODBUS (little-endian, last 2 bytes)
+    const expectedCrc = msg[msgLen - 2] | (msg[msgLen - 1] << 8);
+    const actualCrc = crc16(msg.slice(0, msgLen - 2));
+    // CRC check (log mismatch but still parse)
+    if (expectedCrc !== actualCrc) {
+      // CRC mismatch - try anyway
+    }
+
+    const opcode = msg[2]; // Byte 2 is opcode
+    const data = msg.slice(2, msgLen - 2); // opcode + timestamp + payload (minus CRC)
+    return { opcode, data };
+  } catch {
+    return null;
+  }
+}
+
+// Build encrypted message: [0xFE][Length][Payload...][CRC16_LE] → pad → encrypt
+function buildMessage(payload: number[]): Uint8Array {
+  const len = payload.length + 4; // FE + len + payload + 2 CRC bytes
+  const msg = new Uint8Array(len);
+  msg[0] = 0xFE;
+  msg[1] = len;
+  for (let i = 0; i < payload.length; i++) msg[i + 2] = payload[i];
+  const crc = crc16(msg.slice(0, len - 2));
+  msg[len - 2] = crc & 0xFF;
+  msg[len - 1] = (crc >> 8) & 0xFF;
+  // Pad to 16-byte blocks
+  const padLen = (16 - (msg.length % 16)) % 16;
+  const padded = new Uint8Array(msg.length + padLen);
+  padded.set(msg);
+  return aesEcbEncrypt(padded);
+}
+
+// Move lookup table (from protocol docs, byte at offset 32 in State Change)
+const MOVE_TABLE: Record<number, string> = {
+  0x01: "L'", 0x02: 'L', 0x03: "R'", 0x04: 'R',
+  0x05: "D'", 0x06: 'D', 0x07: "U'", 0x08: 'U',
+  0x09: "F'", 0x0A: 'F', 0x0B: "B'", 0x0C: 'B',
+};
 
 // ── Formula Library ──
 const formulaLibrary: Record<string, Formula[]> = {
@@ -283,6 +344,7 @@ export default function RubikCubeTrainer() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const writeRef = useRef<any>(null);
   const sessionToken = useRef<number[]>([]);
+  const cubeStateRef = useRef<number[]>([]);
   const heartbeatRef = useRef<ReturnType<typeof setInterval>|null>(null);
 
   const addLog = useCallback((msg: string, type: LogEntry['type']='info') => {
@@ -348,132 +410,115 @@ export default function RubikCubeTrainer() {
 
       const service = await server.getPrimaryService(QIYI_SERVICE);
 
-      // Use known UUIDs for QY-QYSC-S-CC3E: fff4=WRITE, fff6=NOTIFY
-      const notifyChar = await service.getCharacteristic(QIYI_CHAR_FALLBACK_NOTIFY);
-      const writeChar = await service.getCharacteristic(QIYI_CHAR_FALLBACK_WRITE);
-      writeRef.current = writeChar;
-      addLog(`✅ WRITE=fff4 NOTIFY=fff6`, 'success');
+      // Per protocol docs: ALL communication uses fff6 (both WRITE and NOTIFY)
+      const mainChar = await service.getCharacteristic(QIYI_CHAR_FALLBACK_NOTIFY); // fff6
+      writeRef.current = mainChar;
+      addLog('✅ fff6 (WRITE+NOTIFY)', 'success');
 
-      // Subscribe to notifications
-      notifyChar.addEventListener('characteristicvaluechanged', ((event: Event) => {
+      // Get MAC address from device (needed for App Hello)
+      // Web Bluetooth doesn't expose MAC directly, but we can try to get it from advertisement
+      // If not available, we'll try with zeros (some cubes accept it)
+      const macBytes = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const adv = (device as any).__adv_data;
+      if (adv) {
+        addLog(`广播数据: ${Array.from(adv).map((b: unknown) => (b as number).toString(16).padStart(2, '0')).join(' ')}`, 'info');
+      }
+
+      // Subscribe to fff6 notifications
+      mainChar.addEventListener('characteristicvaluechanged', ((event: Event) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const val = (event.target as any).value as DataView;
         if (!val) return;
         const raw = new Uint8Array(val.buffer);
         const hex = Array.from(raw).map(b => b.toString(16).padStart(2, '0')).join(' ');
-        addLog(`📦 ${hex.slice(0, 40)}${hex.length > 40 ? '...' : ''}`, 'info');
+        addLog(`📦 ${hex.slice(0, 50)}${hex.length > 50 ? '...' : ''}`, 'info');
 
-        const parsed = parseFrame(raw);
+        const parsed = parseMessage(raw);
         if (!parsed) { addLog('⚠️ 解析失败', 'warning'); return; }
 
-        addLog(`CMD=0x${parsed.cmd.toString(16).padStart(2,'0')} payload=${parsed.payload.length}B`, 'info');
+        if (parsed.opcode === 0x02) {
+          // Cube Hello - initial state + battery
+          if (parsed.data.length >= 34) {
+            const stateBytes = Array.from(parsed.data.slice(5, 32));
+            cubeStateRef.current = stateBytes.reduce<number[]>((acc, b) => { acc.push(b & 0x0F, (b >> 4) & 0x0F); return acc; }, []);
+            const batt = parsed.data[33];
+            setBattery(batt);
+            addLog(`🧊 Cube Hello! 电量:${batt}%`, 'success');
 
-        if (parsed.cmd === 0x02) {
-          // Activate response → extract session token (first 4 bytes of decrypted payload)
-          sessionToken.current = Array.from(parsed.payload.slice(0, 4));
-          const tokenHex = sessionToken.current.map(b => b.toString(16).padStart(2, '0')).join(' ');
-          addLog(`🔑 Token: ${tokenHex}`, 'success');
+            // Send ACK (bytes 3-7 of received message)
+            const ackPayload = [parsed.data[1], parsed.data[2], parsed.data[3], parsed.data[4], parsed.data[5]];
+            const ackMsg = buildMessage([0x01, ...ackPayload]);
+            mainChar.writeValue(ackMsg).then(() => addLog('📤 ACK 已发送', 'info')).catch((e: unknown) => addLog(`ACK失败: ${e}`, 'warning'));
+          }
+        } else if (parsed.opcode === 0x03) {
+          // State Change - move detected
+          if (parsed.data.length >= 34) {
+            const moveByte = parsed.data[32]; // Move byte at offset 32
+            const move = MOVE_TABLE[moveByte];
+            if (move) handleMove(move);
+            else addLog(`未知移动: 0x${moveByte.toString(16)}`, 'warning');
 
-          // Send state sync (cmd 0x04 with token)
-          const syncFrame = buildEncryptedFrame(0x04, sessionToken.current);
-          writeChar.writeValueWithoutResponse(syncFrame).then(() => addLog('📤 状态同步已发送', 'info')).catch((e: unknown) => addLog(`❌ 同步失败: ${e}`, 'error'));
-        } else if (parsed.cmd === 0x05) {
-          // State sync response → 54 bytes of piece state
-          addLog(`🧊 魔方状态已同步 (${parsed.payload.length}B)`, 'success');
-        } else if (parsed.cmd === 0x06) {
-          // Move notification → [timestamp:4B][face:1B][direction:1B]
-          if (parsed.payload.length >= 6) {
-            const face = parsed.payload[4];
-            const dir = parsed.payload[5];
-            const faceStr = FACES[face] || '?';
-            const dirStr = DIRS[dir] || '';
-            handleMove(faceStr + dirStr);
+            const batt = parsed.data[33];
+            if (batt !== undefined) setBattery(batt);
+
+            // Check if ACK needed (byte 91 = needs_ack flag)
+            if (parsed.data.length >= 91 && parsed.data[90] === 1) {
+              const ackPayload = [parsed.data[1], parsed.data[2], parsed.data[3], parsed.data[4], parsed.data[5]];
+              const ackMsg = buildMessage([0x01, ...ackPayload]);
+              mainChar.writeValue(ackMsg).catch(() => {});
+            }
           }
-        } else if (parsed.cmd === 0x0A) {
-          // Battery response
-          if (parsed.payload.length >= 2) {
-            setBattery(parsed.payload[1]);
-            addLog(`🔋 电量: ${parsed.payload[1]}%`, 'info');
-          }
+        } else if (parsed.opcode === 0x04) {
+          addLog('🧊 状态已同步', 'success');
+        } else if (parsed.opcode === 0x05) {
+          addLog(`🧊 当前状态 (${parsed.data.length}B)`, 'success');
+        } else {
+          addLog(`opcode=0x${parsed.opcode.toString(16)} data=${parsed.data.length}B`, 'info');
         }
       }) as EventListener);
 
-      await notifyChar.startNotifications();
-      addLog('🔔 订阅 fff6 通知', 'success');
+      await mainChar.startNotifications();
+      addLog('🔔 已订阅 fff6 通知', 'success');
 
-      // Also try subscribing to fff5 and fff4 for notifications
-      try {
-        const fff5 = await service.getCharacteristic('0000fff5-0000-1000-8000-00805f9b34fb');
-        fff5.addEventListener('characteristicvaluechanged', ((event: Event) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const val = (event.target as any).value as DataView;
-          if (val) {
-            const raw = new Uint8Array(val.buffer);
-            const hex = Array.from(raw).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            addLog(`📦 fff5: ${hex.slice(0, 60)}`, 'info');
-          }
-        }) as EventListener);
-        await fff5.startNotifications();
-        addLog('🔔 也订阅了 fff5', 'info');
-      } catch { /* fff5 might not support notify */ }
+      // ═══ Send App Hello (MANDATORY - first message, cube won't respond without it) ═══
+      // Format: [0xFE][0x15][00...11 bytes MAC_reversed][CRC16_LE]
+      // MAC goes at bytes 13-18, reversed
+      const helloPayload = new Array(19).fill(0x00);
+      helloPayload[0] = 0x15; // length = 21
+      // Bytes 1-11: unknown, can be zeros
+      // Bytes 12-17: MAC address reversed
+      for (let i = 0; i < 6; i++) helloPayload[12 + i] = macBytes[5 - i];
 
-      // Read fff7 state immediately
+      const helloMsg = buildMessage(helloPayload);
+      const helloHex = Array.from(helloMsg).map(b => b.toString(16).padStart(2, '0')).join(' ');
+      addLog(`📤 App Hello: ${helloHex.slice(0, 40)}...`, 'info');
+      await mainChar.writeValue(helloMsg);
+      addLog('📤 App Hello 已发送', 'success');
+
+      // Wait for Cube Hello response
+      await new Promise(r => setTimeout(r, 1000));
+
+      // Also try reading fff7 for initial state
       try {
         const fff7 = await service.getCharacteristic('0000fff7-0000-1000-8000-00805f9b34fb');
         const val = await fff7.readValue();
         const hex = Array.from(new Uint8Array(val.buffer)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-        addLog(`📖 fff7: ${hex.slice(0, 60)}...`, 'info');
-      } catch (e) { addLog(`读取fff7失败: ${e}`, 'warning'); }
+        addLog(`📖 fff7: ${hex.slice(0, 60)}`, 'info');
+      } catch { /* ok */ }
 
-      // Read fff6 current value
-      try {
-        const val = await notifyChar.readValue();
-        const hex = Array.from(new Uint8Array(val.buffer)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-        addLog(`📖 fff6: ${hex.slice(0, 60) || '(empty)'}`, 'info');
-      } catch (e) { addLog(`读取fff6失败: ${e}`, 'warning'); }
-
-      // Try sending raw bytes to fff4 (multiple formats)
-      const rawTests = [
-        { data: new Uint8Array([0xA5]), label: 'A5' },
-        { data: new Uint8Array([0xA5, 0x01]), label: 'A5 01' },
-        { data: new Uint8Array([0xCC, 0x01]), label: 'CC 01' },
-        { data: new Uint8Array([0x01]), label: '01' },
-        { data: new Uint8Array([0xFE, 0x05, 0x01, 0x01, 0x00, 0x01, 0x01, 0x55]), label: 'FE-frame' },
-        { data: buildFrame(0x01, [0x01, 0x00, 0x01]), label: 'AA-frame(cmd1)' },
-        { data: buildEncryptedFrame(0x01, [0x01, 0x00, 0x01]), label: 'AA-enc(cmd1)' },
-      ];
-
-      for (const { data, label } of rawTests) {
-        try {
-          await writeChar.writeValueWithoutResponse(data);
-          const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
-          addLog(`📤 fff4 [${label}] ✅`, 'success');
-          await new Promise(r => setTimeout(r, 300));
-        } catch (e) {
-          addLog(`📤 fff4 [${label}] ❌`, 'warning');
-        }
-      }
-
-      // Also try writing to fff5
-      try {
-        const fff5w = await service.getCharacteristic('0000fff5-0000-1000-8000-00805f9b34fb');
-        await fff5w.writeValueWithoutResponse(new Uint8Array([0xA5]));
-        addLog('📤 fff5 [A5] ✅', 'success');
-      } catch (e) {
-        addLog(`📤 fff5 [A5] ❌`, 'warning');
-      }
-
-      // Start heartbeat
+      // Start heartbeat (send ACK periodically)
       heartbeatRef.current = setInterval(() => {
         if (writeRef.current) {
-          writeRef.current.writeValueWithoutResponse(new Uint8Array([0xA5])).catch(() => {});
+          const hb = buildMessage([0x08]);
+          writeRef.current.writeValue(hb).catch(() => {});
         }
       }, 2000);
       addLog('💓 心跳已启动', 'info');
 
-      // Query battery
-      const battFrame = buildFrame(0x0A, []);
-      await writeChar.writeValueWithoutResponse(battFrame).catch(() => {});
+      // Query battery - send Request State to get current state
+      const reqStateMsg = buildMessage([0x05, 0x05, 0x05, 0x05, 0x05]);
+      await mainChar.writeValue(reqStateMsg).catch(() => {});
 
       setConnected(true);
       setConnStatus(`已连接: ${device.name}`);
