@@ -230,6 +230,7 @@ export default function RubikCubeTrainer() {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('未连接');
   const [isConnecting, setIsConnecting] = useState(false);
+  const connectingRef = useRef(false); // Lock to prevent double-connect
   const [cubeRotX, setCubeRotX] = useState(-25);
   const [cubeRotY, setCubeRotY] = useState(35);
   const [difficulty, setDifficulty] = useState('all');
@@ -332,7 +333,8 @@ export default function RubikCubeTrainer() {
 
   // Bluetooth connect with real data parsing
   const connectCube = useCallback(async () => {
-    if (isConnecting) return;
+    if (isConnecting || connectingRef.current) return;
+    connectingRef.current = true;
     setIsConnecting(true);
 
     // Browser detection
@@ -426,42 +428,44 @@ export default function RubikCubeTrainer() {
         addLog('⚠️ 未找到可订阅的通知特征值', 'warning');
       }
 
-      // ── Send activation commands to start move reporting ──
-      // QY/Qiyi cubes need a write command to start sending moves
+      // ── Send activation commands ──
+      // QY cubes need writeWithoutResponse (not writeValue which requires ACK)
       for (const char of chars) {
         const uuid = char.uuid;
         const props = char.properties;
-        if (props.write || props.writeWithoutResponse) {
-          // Try common activation commands
+        if (props.writeWithoutResponse || props.write) {
           const cmds = [
-            new Uint8Array([0xA5]),                          // Simple start
-            new Uint8Array([0xA5, 0x01]),                    // Start moves
-            new Uint8Array([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),  // Giiker-style
-            new Uint8Array([0xCC, 0x01]),                    // Qiyi start
+            // QY-QYSC activation: byte[0]=0xA5 on fff4
+            { data: new Uint8Array([0xA5]), label: 'A5' },
+            // Alternate: send 0x01 0x01
+            { data: new Uint8Array([0x01, 0x01]), label: '01 01' },
           ];
-          for (const cmd of cmds) {
+          for (const { data, label } of cmds) {
             try {
-              const cmdBytes = Array.from(cmd).map(b => b.toString(16).padStart(2, '0')).join(' ');
-              addLog(`📤 写入 ${uuid.slice(4,8)}: ${cmdBytes}`, 'info');
-              await char.writeValue(cmd);
-              await new Promise(r => setTimeout(r, 200));
+              addLog(`📤 写入 ${uuid.slice(4,8)}: ${label}`, 'info');
+              // Try writeWithoutResponse first (more compatible)
+              if (props.writeWithoutResponse) {
+                await char.writeValueWithoutResponse(data);
+              } else {
+                await char.writeValue(data);
+              }
+              addLog(`  ✅ 写入成功`, 'success');
+              await new Promise(r => setTimeout(r, 300));
             } catch (e) {
-              // Some commands may fail, that's ok
-              addLog(`  写入失败: ${e}`, 'warning');
+              addLog(`  ❌ 写入失败: ${e}`, 'warning');
             }
           }
-          // Only try first writable characteristic
-          break;
+          break; // Only use first writable char
         }
       }
 
-      // Also try reading fff7 (state) to trigger data flow
+      // Read initial state from fff7 for debugging
       for (const char of chars) {
         if (char.uuid.includes('fff7') && char.properties.read) {
           try {
             const val = await char.readValue();
             const bytes = Array.from(new Uint8Array(val.buffer)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            addLog(`📖 fff7 状态: ${bytes}`, 'info');
+            addLog(`📖 fff7 初始状态 (${val.byteLength}B): ${bytes.slice(0, 60)}...`, 'info');
           } catch (e) {
             addLog(`读取 fff7 失败: ${e}`, 'warning');
           }
@@ -470,7 +474,7 @@ export default function RubikCubeTrainer() {
 
       setIsConnected(true);
       setConnectionStatus(`已连接: ${device.name || 'QY Cube'}`);
-      addLog('✅ 魔方连接成功！转动魔方试试', 'success');
+      addLog('✅ 连接完成，转动魔方观察数据', 'success');
 
       // Handle disconnect
       device.addEventListener('gattserverdisconnected', () => {
@@ -488,6 +492,7 @@ export default function RubikCubeTrainer() {
         addLog(`连接失败: ${msg}`, 'error');
       }
     } finally {
+      connectingRef.current = false;
       setIsConnecting(false);
     }
   }, [isConnecting, addLog, handleCubeMove]);
