@@ -14,8 +14,10 @@ interface LogEntry { id: number; time: string; message: string; type: 'info' | '
 // Frame: [0xAA][LEN_H][LEN_L][CMD][DATA...][XOR][0x55]
 
 const QIYI_SERVICE = '0000fff0-0000-1000-8000-00805f9b34fb';
-const QIYI_CHAR_NOTIFY = '0000fff1-0000-1000-8000-00805f9b34fb';
-const QIYI_CHAR_WRITE = '0000fff2-0000-1000-8000-00805f9b34fb';
+// Auto-discover: will probe all characteristics on the service
+// Typical layout for QY-QYSC-S-CC3E: fff4(WRITE), fff5(WRITE), fff6(NOTIFY), fff7(READ)
+const QIYI_CHAR_FALLBACK_NOTIFY = '0000fff6-0000-1000-8000-00805f9b34fb';
+const QIYI_CHAR_FALLBACK_WRITE = '0000fff4-0000-1000-8000-00805f9b34fb';
 
 // AES key: "0102030405060708" as bytes
 const AES_KEY = [0x30, 0x31, 0x30, 0x32, 0x30, 0x33, 0x30, 0x34, 0x30, 0x35, 0x30, 0x36, 0x30, 0x37, 0x30, 0x38];
@@ -346,11 +348,38 @@ export default function RubikCubeTrainer() {
 
       const service = await server.getPrimaryService(QIYI_SERVICE);
 
-      // Get write and notify characteristics (SEPARATE!)
-      const writeChar = await service.getCharacteristic(QIYI_CHAR_WRITE);
-      const notifyChar = await service.getCharacteristic(QIYI_CHAR_NOTIFY);
+      // Auto-discover write and notify characteristics
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const chars: any[] = await service.getCharacteristics();
+      addLog(`发现 ${chars.length} 个特征值`, 'info');
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let writeChar: any = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let notifyChar: any = null;
+
+      for (const c of chars) {
+        const uuid = c.uuid.slice(4, 8);
+        const props = c.properties;
+        const tags = [
+          props.read ? 'R' : '',
+          props.write ? 'W' : '',
+          props.writeWithoutResponse ? 'WnR' : '',
+          props.notify ? 'N' : '',
+        ].filter(Boolean).join('+');
+        addLog(`  ${uuid}: ${tags}`, 'info');
+
+        if (props.notify && !notifyChar) notifyChar = c;
+        if ((props.write || props.writeWithoutResponse) && !writeChar) writeChar = c;
+      }
+
+      if (!notifyChar || !writeChar) {
+        addLog('❌ 未找到所需的 NOTIFY 或 WRITE 特征值', 'error');
+        return;
+      }
+
       writeRef.current = writeChar;
-      addLog('✅ fff1(NOTIFY) + fff2(WRITE)', 'success');
+      addLog(`✅ WRITE=${writeChar.uuid.slice(4,8)} NOTIFY=${notifyChar.uuid.slice(4,8)}`, 'success');
 
       // Subscribe to notifications
       notifyChar.addEventListener('characteristicvaluechanged', ((event: Event) => {
