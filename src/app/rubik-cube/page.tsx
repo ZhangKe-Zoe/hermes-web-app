@@ -348,38 +348,11 @@ export default function RubikCubeTrainer() {
 
       const service = await server.getPrimaryService(QIYI_SERVICE);
 
-      // Auto-discover write and notify characteristics
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const chars: any[] = await service.getCharacteristics();
-      addLog(`发现 ${chars.length} 个特征值`, 'info');
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let writeChar: any = null;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let notifyChar: any = null;
-
-      for (const c of chars) {
-        const uuid = c.uuid.slice(4, 8);
-        const props = c.properties;
-        const tags = [
-          props.read ? 'R' : '',
-          props.write ? 'W' : '',
-          props.writeWithoutResponse ? 'WnR' : '',
-          props.notify ? 'N' : '',
-        ].filter(Boolean).join('+');
-        addLog(`  ${uuid}: ${tags}`, 'info');
-
-        if (props.notify && !notifyChar) notifyChar = c;
-        if ((props.write || props.writeWithoutResponse) && !writeChar) writeChar = c;
-      }
-
-      if (!notifyChar || !writeChar) {
-        addLog('❌ 未找到所需的 NOTIFY 或 WRITE 特征值', 'error');
-        return;
-      }
-
+      // Use known UUIDs for QY-QYSC-S-CC3E: fff4=WRITE, fff6=NOTIFY
+      const notifyChar = await service.getCharacteristic(QIYI_CHAR_FALLBACK_NOTIFY);
+      const writeChar = await service.getCharacteristic(QIYI_CHAR_FALLBACK_WRITE);
       writeRef.current = writeChar;
-      addLog(`✅ WRITE=${writeChar.uuid.slice(4,8)} NOTIFY=${notifyChar.uuid.slice(4,8)}`, 'success');
+      addLog(`✅ WRITE=fff4 NOTIFY=fff6`, 'success');
 
       // Subscribe to notifications
       notifyChar.addEventListener('characteristicvaluechanged', ((event: Event) => {
@@ -403,7 +376,7 @@ export default function RubikCubeTrainer() {
 
           // Send state sync (cmd 0x04 with token)
           const syncFrame = buildEncryptedFrame(0x04, sessionToken.current);
-          writeChar.writeValue(syncFrame).then(() => addLog('📤 状态同步已发送', 'info')).catch((e: unknown) => addLog(`❌ 同步失败: ${e}`, 'error'));
+          writeChar.writeValueWithoutResponse(syncFrame).then(() => addLog('📤 状态同步已发送', 'info')).catch((e: unknown) => addLog(`❌ 同步失败: ${e}`, 'error'));
         } else if (parsed.cmd === 0x05) {
           // State sync response → 54 bytes of piece state
           addLog(`🧊 魔方状态已同步 (${parsed.payload.length}B)`, 'success');
@@ -426,25 +399,54 @@ export default function RubikCubeTrainer() {
       }) as EventListener);
 
       await notifyChar.startNotifications();
-      addLog('🔔 订阅 fff1 通知', 'success');
+      addLog('🔔 订阅 fff6 通知', 'success');
 
-      // Send activate command (cmd 0x01, data 01 00 01)
-      const activateFrame = buildFrame(0x01, [0x01, 0x00, 0x01]);
-      await writeChar.writeValue(activateFrame);
-      addLog('📤 激活命令已发送 (cmd=0x01)', 'success');
+      // Try multiple activation methods
+      // Method 1: Raw activation bytes (simplest, no encryption)
+      try {
+        addLog('📤 尝试原始激活字节...', 'info');
+        await writeChar.writeValueWithoutResponse(new Uint8Array([0xA5]));
+        addLog('  ✅ 原始字节发送成功', 'success');
+      } catch (e) {
+        addLog(`  ❌ 原始字节失败: ${e}`, 'warning');
+      }
+      await new Promise(r => setTimeout(r, 500));
 
-      // Start heartbeat (cmd 0x08) every 2 seconds
+      // Method 2: Protocol frame (cmd=0x01, data=[01,00,01])
+      try {
+        const activateFrame = buildFrame(0x01, [0x01, 0x00, 0x01]);
+        const hex = Array.from(activateFrame).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        addLog(`📤 激活帧: ${hex}`, 'info');
+        await writeChar.writeValueWithoutResponse(activateFrame);
+        addLog('  ✅ 激活帧发送成功', 'success');
+      } catch (e) {
+        addLog(`  ❌ 激活帧失败: ${e}`, 'warning');
+      }
+      await new Promise(r => setTimeout(r, 500));
+
+      // Method 3: Encrypted activation
+      try {
+        const encFrame = buildEncryptedFrame(0x01, [0x01, 0x00, 0x01]);
+        const hex = Array.from(encFrame).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        addLog(`📤 加密帧: ${hex.slice(0, 40)}...`, 'info');
+        await writeChar.writeValueWithoutResponse(encFrame);
+        addLog('  ✅ 加密帧发送成功', 'success');
+      } catch (e) {
+        addLog(`  ❌ 加密帧失败: ${e}`, 'warning');
+      }
+
+      // Start heartbeat
       heartbeatRef.current = setInterval(() => {
         if (writeRef.current) {
           const hb = buildFrame(0x08, []);
-          writeRef.current.writeValue(hb).catch(() => {});
+          writeRef.current.writeValueWithoutResponse(hb).catch(() => {});
         }
       }, 2000);
-      addLog('💓 心跳已启动 (2s)', 'info');
+      addLog('💓 心跳已启动', 'info');
 
       // Query battery
       const battFrame = buildFrame(0x0A, []);
-      await writeChar.writeValue(battFrame);
+      await writeChar.writeValueWithoutResponse(battFrame).catch(() => {});
 
       setConnected(true);
       setConnStatus(`已连接: ${device.name}`);
