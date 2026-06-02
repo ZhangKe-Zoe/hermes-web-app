@@ -7,6 +7,7 @@ import aesjs from 'aes-js';
 interface Formula { id: string; name: string; formula: string; description: string; difficulty?: 'beginner' | 'intermediate' | 'advanced'; }
 interface Stats { correct: number; wrong: number; streak: number; bestStreak: number; }
 interface LogEntry { id: number; time: string; message: string; type: 'info' | 'success' | 'error' | 'warning'; }
+interface RecentMove { move: string; type: 'matched' | 'valid' | 'wrong'; }
 
 // ═══════════════════════════════════════════════════════════════════
 // QiYi Smart Cube BLE Protocol
@@ -39,6 +40,7 @@ function aesDecrypt(data: Uint8Array): Uint8Array {
   return new aesjs.ModeOfOperation.ecb(AES_KEY_BYTES).decrypt(data);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildMessage(payload: number[]): Uint8Array {
   const len = payload.length + 4;
   const msg = new Uint8Array(len);
@@ -230,10 +232,275 @@ function Cube3D({ rx, ry, facelets, size = 180 }: { rx: number; ry: number; face
   );
 }
 
+// ── Helper: color hex → Chinese name ──
+function colorName(hex: string): string {
+  const map: Record<string, string> = {
+    '#FFFFFF': '白', '#FFD500': '黄', '#B71234': '红',
+    '#FF6600': '橙', '#009B48': '绿', '#0046AD': '蓝',
+  };
+  return map[hex] || '?';
+}
+
+// ── Smart Solve Stage Analyzer ──
+// Face order: U(0-8), R(9-17), F(18-26), D(27-35), L(36-44), B(45-53)
+// Face layout: 0 1 2 / 3 4 5 / 6 7 8
+interface SolveStageResult {
+  stage: string;
+  stageIcon: string;
+  description: string;
+  suggestedFormula: string;
+  formulaName: string;
+  explanation: string;
+}
+
+function analyzeSolveStage(facelets: string[]): SolveStageResult {
+  const U = facelets.slice(0, 9);
+  const R = facelets.slice(9, 18);
+  const F = facelets.slice(18, 27);
+  const D = facelets.slice(27, 36);
+  const L = facelets.slice(36, 45);
+  const B = facelets.slice(45, 54);
+
+  const isFaceSolid = (face: string[]) => face.every(c => c === face[4]);
+
+  // Check if fully solved
+  if ([U, R, F, D, L, B].every(isFaceSolid)) {
+    return { stage: '已还原', stageIcon: '🎉', description: '魔方已完全还原！', suggestedFormula: '', formulaName: '', explanation: '恭喜！所有面已还原完成' };
+  }
+
+  // Reference colors
+  const dColor = D[4]; // bottom center
+  const uColor = U[4]; // top center (last layer)
+
+  // ── Check bottom cross ──
+  // D edges: D[1](back), D[3](left), D[5](right), D[7](front)
+  // Adjacent side: B[7], L[7], R[7], F[7]
+  const dEdgesOk = D[1] === dColor && D[3] === dColor && D[5] === dColor && D[7] === dColor;
+  const sideEdgesOk = F[7] === F[4] && R[7] === R[4] && B[7] === B[4] && L[7] === L[4];
+  const bottomCrossComplete = dEdgesOk && sideEdgesOk;
+
+  if (!bottomCrossComplete) {
+    return {
+      stage: '底层十字', stageIcon: '➕',
+      description: `将${colorName(dColor)}色十字拼在底层`,
+      suggestedFormula: '', formulaName: '', explanation: '先找到白色棱块，逐一对齐到底面和侧面中心'
+    };
+  }
+
+  // ── Check F2L ──
+  // D face all dColor + bottom two rows (indices 3-8) of F, R, B, L match their centers
+  const f2lSidesOk =
+    F[3] === F[4] && F[5] === F[4] && F[6] === F[4] && F[7] === F[4] && F[8] === F[4] &&
+    R[3] === R[4] && R[5] === R[4] && R[6] === R[4] && R[7] === R[4] && R[8] === R[4] &&
+    B[3] === B[4] && B[5] === B[4] && B[6] === B[4] && B[7] === B[4] && B[8] === B[4] &&
+    L[3] === L[4] && L[5] === L[4] && L[6] === L[4] && L[7] === L[4] && L[8] === L[4];
+  const f2lComplete = isFaceSolid(D) && f2lSidesOk;
+
+  if (!f2lComplete) {
+    return {
+      stage: 'F2L', stageIcon: '🧩',
+      description: '完成前两层角棱配对',
+      suggestedFormula: "U R U' R'", formulaName: 'F2L基础',
+      explanation: '找到顶层角棱对，配对后插入对应槽位'
+    };
+  }
+
+  // ── Check OLL ──
+  const ollComplete = isFaceSolid(U);
+
+  if (!ollComplete) {
+    // Count facelets on U that match uColor
+    const uMatch = U.filter(c => c === uColor).length;
+
+    // Edges of U: indices 1, 3, 5, 7
+    const uEdgesMatch = [1, 3, 5, 7].filter(i => U[i] === uColor);
+    // Corners of U: indices 0, 2, 6, 8
+    const uCornersMatch = [0, 2, 6, 8].filter(i => U[i] === uColor);
+
+    if (uMatch <= 1) {
+      // Dot case (only center or center + 0 edges)
+      return {
+        stage: 'OLL', stageIcon: '🟡',
+        description: '顶面点状 (dot)',
+        suggestedFormula: "F R U R' U' F'", formulaName: 'OLL 点→十字',
+        explanation: '顶面只有中心黄色，先用公式做出十字'
+      };
+    }
+
+    if (uEdgesMatch.length === 2 && uCornersMatch.length === 0) {
+      // Check if L-shape or line
+      const edgePair = uEdgesMatch.join(',');
+      const isLine = (edgePair === '1,7') || (edgePair === '3,5');
+      if (isLine) {
+        return {
+          stage: 'OLL', stageIcon: '🟡',
+          description: '顶面横线 (line)',
+          suggestedFormula: "F R U R' U' F'", formulaName: 'OLL 线→十字',
+          explanation: '两条棱朝上形成直线，转90°后套用十字公式'
+        };
+      } else {
+        return {
+          stage: 'OLL', stageIcon: '🟡',
+          description: '顶面L形 (L-shape)',
+          suggestedFormula: "F U R U' R' F'", formulaName: 'OLL L→十字',
+          explanation: '两条棱朝上形成L形，调整方向后做出十字'
+        };
+      }
+    }
+
+    if (uEdgesMatch.length === 4 && uCornersMatch.length === 0) {
+      // Cross formed, no corners
+      return {
+        stage: 'OLL', stageIcon: '🟡',
+        description: '顶面十字 (cross)',
+        suggestedFormula: "R U R' U R U2 R'", formulaName: 'OLL 鱼形公式',
+        explanation: '十字已完成，用鱼形公式翻转角块至全黄'
+      };
+    }
+
+    if (uEdgesMatch.length === 4 && uCornersMatch.length >= 1) {
+      // Cross + some corners → fish or partial
+      // Check for fish pattern: exactly 1 corner matching, positioned diagonally
+      if (uCornersMatch.length === 1) {
+        const c = uCornersMatch[0];
+        // Fish: the matching corner and the U[4] form a pattern
+        // Determine which fish by checking orientation
+        const fishCorner = c;
+        // For simplicity, check if it's the "right" fish or "left" fish
+        if (fishCorner === 0 || fishCorner === 8) {
+          return {
+            stage: 'OLL', stageIcon: '🟡',
+            description: '顶面正鱼形',
+            suggestedFormula: "R U R' U R U2 R'", formulaName: 'OLL 正鱼形',
+            explanation: '顶层鱼形，用R U R\' U R U2 R\'将黄色面补全'
+          };
+        } else {
+          return {
+            stage: 'OLL', stageIcon: '🟡',
+            description: '顶面反鱼形',
+            suggestedFormula: "R U2 R' U' R U' R'", formulaName: 'OLL 反鱼形',
+            explanation: '顶层反鱼形，用R U2 R\' U\' R U\' R\'将黄色面补全'
+          };
+        }
+      }
+      if (uCornersMatch.length === 2) {
+        return {
+          stage: 'OLL', stageIcon: '🟡',
+          description: '顶面十字+部分角块',
+          suggestedFormula: "R U2 R' U' R U R' U' R U' R'", formulaName: 'OLL 21号',
+          explanation: '十字完成但角块未全黄，使用OLL-21翻转'
+        };
+      }
+      // 3 corners matching → almost done
+      return {
+        stage: 'OLL', stageIcon: '🟡',
+        description: '顶面即将完成',
+        suggestedFormula: "R U R' U R U2 R'", formulaName: 'OLL 鱼形公式',
+        explanation: '只差一个角块，使用鱼形公式完成OLL'
+      };
+    }
+
+    // Fallback: some edges match but pattern not recognized
+    if (uEdgesMatch.length >= 2) {
+      return {
+        stage: 'OLL', stageIcon: '🟡',
+        description: '顶面部分朝上',
+        suggestedFormula: "F R U R' U' F'", formulaName: 'OLL 十字公式',
+        explanation: '先将棱块全部翻转朝上，形成十字'
+      };
+    }
+
+    return {
+      stage: 'OLL', stageIcon: '🟡',
+      description: '顶面方向未完成',
+      suggestedFormula: "F R U R' U' F'", formulaName: 'OLL 十字公式',
+      explanation: '顶面颜色未统一，先做十字再翻角'
+    };
+  }
+
+  // ── Check PLL ──
+  // U face is all uColor, check if side faces are solved
+  if ([U, R, F, D, L, B].every(isFaceSolid)) {
+    return { stage: '已还原', stageIcon: '🎉', description: '魔方已完全还原！', suggestedFormula: '', formulaName: '', explanation: '恭喜！所有面已还原完成' };
+  }
+
+  // PLL: U face all same color, check edge and corner positions
+  // U edge adjacencies:
+  // U[7]-F[1]: front edge → F[1] should equal F[4]
+  // U[5]-R[1]: right edge → R[1] should equal R[4]
+  // U[1]-B[1]: back edge → B[1] should equal B[4]
+  // U[3]-L[1]: left edge → L[1] should equal L[4]
+  const edgeCorrect = [
+    F[1] === F[4], // front
+    R[1] === R[4], // right
+    B[1] === B[4], // back
+    L[1] === L[4], // left
+  ];
+  const correctEdgeCount = edgeCorrect.filter(Boolean).length;
+
+  // U corner adjacencies (simplified check):
+  // UFR: U[8]-F[2]-R[0] → F[2]===F[4] && R[0]===R[4]
+  // UFL: U[6]-F[0]-L[2] → F[0]===F[4] && L[2]===L[4]
+  // UBR: U[2]-B[2]-R[2] → B[2]===B[4] && R[2]===R[4]
+  // UBL: U[0]-B[0]-L[0] → B[0]===B[4] && L[0]===L[4]
+  const cornerCorrect = [
+    F[2] === F[4] && R[0] === R[4], // UFR
+    F[0] === F[4] && L[2] === L[4], // UFL
+    B[2] === B[4] && R[2] === R[4], // UBR
+    B[0] === B[4] && L[0] === L[4], // UBL
+  ];
+  const correctCornerCount = cornerCorrect.filter(Boolean).length;
+
+  if (correctEdgeCount === 4 && correctCornerCount < 4) {
+    return {
+      stage: 'PLL', stageIcon: '🔄',
+      description: '棱块已归位，角块需交换',
+      suggestedFormula: "R U R' U' R' F R2 U' R' U' R U R' F'", formulaName: 'PLL T排列',
+      explanation: '四条棱位置正确，用T排列交换相邻角块'
+    };
+  }
+
+  if (correctEdgeCount === 0 && correctCornerCount === 4) {
+    return {
+      stage: 'PLL', stageIcon: '🔄',
+      description: '角块已归位，棱块需对换',
+      suggestedFormula: "M2 U M2 U2 M2 U M2", formulaName: 'PLL H排列',
+      explanation: '角块正确但棱块互换，使用H排列'
+    };
+  }
+
+  if (correctEdgeCount === 1 && correctCornerCount === 4) {
+    // One edge correct, three need cycling → Ua or Ub
+    return {
+      stage: 'PLL', stageIcon: '🔄',
+      description: '三棱换 (Ua/Ub)',
+      suggestedFormula: "R U R' U R' U' R2 U' R' U R' U R", formulaName: 'PLL Ua排列',
+      explanation: '三条棱需要循环换位，用Ua排列顺时针旋转'
+    };
+  }
+
+  if (correctEdgeCount === 0 && correctCornerCount === 0) {
+    return {
+      stage: 'PLL', stageIcon: '🔄',
+      description: '顶层排列混乱',
+      suggestedFormula: "R U R' U' R' F R2 U' R' U' R U R' F'", formulaName: 'PLL T排列',
+      explanation: '先用T排列归位角块，再处理棱块'
+    };
+  }
+
+  // Generic PLL
+  return {
+    stage: 'PLL', stageIcon: '🔄',
+    description: `顶层排列 (${correctEdgeCount}棱✓ ${correctCornerCount}角✓)`,
+    suggestedFormula: "R U R' U R' U' R2 U' R' U R' U R", formulaName: 'PLL Ua排列',
+    explanation: '尝试用三棱换公式调整顶层排列'
+  };
+}
+
 // ── Formula Detail Card (shared between mobile & desktop) ──
-function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, time, onStart, onReset }: {
+function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, time, recentMoves, onStart, onReset }: {
   formula: Formula; practicing: boolean; moves: string[]; wrongs: Set<number>; hlStep: number;
-  progress: number; time: number; onStart: () => void; onReset: () => void;
+  progress: number; time: number; recentMoves: RecentMove[]; onStart: () => void; onReset: () => void;
 }) {
   return (
     <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: 20 }}>
@@ -246,6 +513,26 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
           {!practicing ? <button onClick={onStart} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: '#06b6d4', color: '#fff' }}>▶ 开始</button> : <button onClick={onReset} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.06)', color: '#94a3b8' }}>⏹ 重置</button>}
         </div>
       </div>
+
+      {/* ── Recent Moves Strip ── */}
+      {recentMoves.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6 }}>最近操作</div>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {recentMoves.map((rm, i) => (
+              <span key={i} style={{
+                fontFamily: '"SF Mono", Menlo, monospace', fontSize: 14, fontWeight: 600,
+                padding: '4px 10px', borderRadius: 6,
+                background: rm.type === 'matched' ? 'rgba(74,222,128,0.2)' : rm.type === 'wrong' ? 'rgba(248,113,113,0.2)' : 'rgba(34,211,238,0.15)',
+                color: rm.type === 'matched' ? '#4ade80' : rm.type === 'wrong' ? '#f87171' : '#22d3ee',
+                border: `1px solid ${rm.type === 'matched' ? 'rgba(74,222,128,0.3)' : rm.type === 'wrong' ? 'rgba(248,113,113,0.3)' : 'rgba(34,211,238,0.2)'}`,
+                opacity: i === 0 ? 1 : Math.max(0.4, 1 - i * 0.12),
+              }}>{rm.move}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
         {formula.formula.split(' ').map((m, i) => (
           <span key={i} style={{
@@ -265,6 +552,49 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
           </div>
           <div style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 8 }}>{time.toFixed(1)}s · 步骤 {moves.length}/{formula.formula.split(' ').length}</div>
         </>
+      )}
+    </div>
+  );
+}
+
+// ── Smart Guidance Panel ──
+function SmartGuidance({ facelets }: { facelets: string[] | null }) {
+  if (!facelets || facelets.length < 54) return null;
+  const result = analyzeSolveStage(facelets);
+  const stageColors: Record<string, string> = {
+    '底层十字': '#22d3ee', 'F2L': '#3b82f6', 'OLL': '#facc15', 'PLL': '#a855f7', '已还原': '#4ade80',
+  };
+  const stageColor = stageColors[result.stage] || '#94a3b8';
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+      borderRadius: 16, padding: 16,
+    }}>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span>🧠 智能引导</span>
+        <span style={{
+          fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 6,
+          background: `${stageColor}20`, color: stageColor,
+          border: `1px solid ${stageColor}40`,
+        }}>{result.stageIcon} {result.stage}</span>
+      </div>
+      <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>{result.description}</div>
+      {result.suggestedFormula && (
+        <div style={{
+          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+          borderRadius: 10, padding: 12,
+        }}>
+          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>{result.formulaName}</div>
+          <div style={{
+            fontFamily: '"SF Mono", Menlo, monospace', fontSize: 15, fontWeight: 700,
+            color: '#22d3ee', marginBottom: 6, letterSpacing: 1,
+          }}>{result.suggestedFormula}</div>
+          <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.5 }}>{result.explanation}</div>
+        </div>
+      )}
+      {!result.suggestedFormula && result.explanation && (
+        <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.5 }}>{result.explanation}</div>
       )}
     </div>
   );
@@ -291,6 +621,7 @@ export default function RubikCubeTrainer() {
   const [showSafari, setShowSafari] = useState(false);
   const [cubeFacelets, setCubeFacelets] = useState<string[] | null>(null);
   const [showLog, setShowLog] = useState(false);
+  const [recentMoves, setRecentMoves] = useState<RecentMove[]>([]);
 
   const startRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -314,6 +645,9 @@ export default function RubikCubeTrainer() {
   const handleMove = useCallback((move: string) => {
     setLastMove(move);
     addLog(`🎲 ${move}`, 'success');
+
+    let moveType: RecentMove['type'] = 'valid';
+
     if (formula && practicing) {
       const expected = formula.formula.split(' ');
       const idx = moves.length;
@@ -321,9 +655,11 @@ export default function RubikCubeTrainer() {
         const exp = expected[idx].replace(/\s+/g, '').toUpperCase();
         const act = move.replace(/\s+/g, '').toUpperCase();
         if (act === exp) {
+          moveType = 'matched';
           setStats(p => { const ns = p.streak + 1; return { correct: p.correct + 1, wrong: p.wrong, streak: ns, bestStreak: Math.max(p.bestStreak, ns) }; });
           addLog(`✅ ${idx + 1}: ${move}`, 'success'); setHlStep(idx + 1);
         } else {
+          moveType = 'wrong';
           setStats(p => ({ ...p, wrong: p.wrong + 1, streak: 0 }));
           setWrongs(p => new Set(p).add(idx));
           addLog(`❌ 期望${expected[idx]}，实际${move}`, 'error');
@@ -336,6 +672,9 @@ export default function RubikCubeTrainer() {
         }
       }
     }
+
+    // Track recent moves (max 10, newest first)
+    setRecentMoves(p => [{ move, type: moveType }, ...p].slice(0, 10));
   }, [formula, practicing, moves, addLog]);
 
   // ── BLE Connect ──
@@ -456,6 +795,9 @@ export default function RubikCubeTrainer() {
 
   const progress = formula ? (moves.length / formula.formula.split(' ').length) * 100 : 0;
 
+  // Last 5 recent moves for display
+  const recentMovesDisplay = recentMoves.slice(0, 5);
+
   const diffMeta = (d?: string) => {
     switch (d) {
       case 'beginner': return { label: '初级', color: '#4ade80', bg: 'rgba(74,222,128,0.15)' };
@@ -512,21 +854,29 @@ export default function RubikCubeTrainer() {
       {/* ═══════ MOBILE LAYOUT (< 768px) ═══════ */}
       <div className="mobile-layout">
         {/* Cube + Connect */}
-        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, margin: '0 16px', padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-          <div ref={cubeRef} style={{ width: 200, height: 200, touchAction: 'none' }}>
-            <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={180} />
+        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, margin: '0 16px', padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+          <div style={{ width: '100%', height: 320, overflow: 'hidden', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div ref={cubeRef} style={{ width: 200, height: 200, touchAction: 'none' }}>
+              <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={180} />
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+          <div style={{ marginTop: 12, fontSize: 11, color: '#475569' }}>拖拽旋转魔方</div>
+          <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 8 }}>
             <button onClick={connect} disabled={connecting || connected} style={{ flex: 1, padding: '10px 0', fontSize: 14, fontWeight: 600, borderRadius: 10, border: 'none', cursor: connecting ? 'wait' : 'pointer', background: connected ? 'rgba(74,222,128,0.15)' : '#06b6d4', color: connected ? '#4ade80' : '#fff', opacity: connecting ? 0.5 : 1 }}>
               {connecting ? '连接中...' : connected ? '✅ 已连接' : '🔗 连接魔方'}
             </button>
             <button onClick={() => setShowLog(p => !p)} style={{ padding: '10px 14px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: '#94a3b8', cursor: 'pointer' }}>📋</button>
           </div>
           {showLog && (
-            <div style={{ width: '100%', maxHeight: 200, overflow: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: 10, padding: 10 }}>
+            <div style={{ width: '100%', maxHeight: 200, overflow: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: 10, padding: 10, marginTop: 8 }}>
               {logs.map(l => <div key={l.id} style={{ fontSize: 10, padding: '2px 0', display: 'flex', gap: 6, color: l.type === 'error' ? '#f87171' : l.type === 'success' ? '#4ade80' : '#94a3b8' }}><span style={{ fontFamily: 'monospace', color: '#475569', flexShrink: 0 }}>{l.time}</span><span>{l.message}</span></div>)}
             </div>
           )}
+        </div>
+
+        {/* Smart Guidance - Mobile */}
+        <div style={{ padding: '12px 16px 0' }}>
+          <SmartGuidance facelets={cubeFacelets} />
         </div>
 
         {/* Stats */}
@@ -561,7 +911,7 @@ export default function RubikCubeTrainer() {
         {/* Formula detail */}
         {formula && (
           <div style={{ padding: '0 16px 16px' }}>
-            <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} onStart={startPractice} onReset={resetPractice} />
+            <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} />
           </div>
         )}
       </div>
@@ -596,18 +946,24 @@ export default function RubikCubeTrainer() {
 
           {/* Center - 3D Cube + Practice */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, minHeight: 280 }}>
-              <div ref={cubeRef} style={{ width: 240, height: 240, touchAction: 'none' }}>
-                <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={220} />
+            <div style={{ background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, height: 320, overflow: 'hidden' }}>
+              <div style={{ flex: 1, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                <div ref={cubeRef} style={{ width: 240, height: 240, touchAction: 'none' }}>
+                  <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={220} />
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ marginTop: 8, fontSize: 11, color: '#475569' }}>拖拽旋转魔方</div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <button onClick={connect} disabled={connecting || connected} style={{ padding: '8px 24px', fontSize: 14, fontWeight: 600, borderRadius: 10, border: 'none', cursor: connecting ? 'wait' : 'pointer', background: connected ? 'rgba(74,222,128,0.15)' : '#06b6d4', color: connected ? '#4ade80' : '#fff', opacity: connecting ? 0.5 : 1 }}>
                   {connecting ? '连接中...' : connected ? '✅ 已连接' : '🔗 连接魔方'}
                 </button>
               </div>
-              <div style={{ fontSize: 11, color: '#475569' }}>拖拽旋转魔方</div>
             </div>
-            {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} onStart={startPractice} onReset={resetPractice} />}
+
+            {/* Smart Guidance - Desktop */}
+            <SmartGuidance facelets={cubeFacelets} />
+
+            {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} />}
           </div>
 
           {/* Right - Stats + Log */}
