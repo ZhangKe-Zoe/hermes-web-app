@@ -170,7 +170,7 @@ function Cube3D({ rx, ry, facelets, size = 180 }: { rx: number; ry: number; face
   const cubeSize = cubieSize * 3 + gap * 4;
 
   return (
-    <div style={{ perspective: `${size * 3}px`, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ perspective: `${size * 5}px`, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{
         width: cubeSize, height: cubeSize, position: 'relative',
         transformStyle: 'preserve-3d',
@@ -199,7 +199,7 @@ function Cube3D({ rx, ry, facelets, size = 180 }: { rx: number; ry: number; face
 
           const tx = x * (cubieSize + gap) + cubeSize / 2 - cubieSize / 2;
           const ty = -y * (cubieSize + gap) + cubeSize / 2 - cubieSize / 2;
-          const tz = z * (cubieSize / 2 + gap);
+          const tz = z * (cubieSize + gap);
 
           return (
             <div key={idx} style={{
@@ -622,6 +622,11 @@ export default function RubikCubeTrainer() {
   const [cubeFacelets, setCubeFacelets] = useState<string[] | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [recentMoves, setRecentMoves] = useState<RecentMove[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const [macInput, setMacInput] = useState(() => {
+    if (typeof window !== "undefined") return localStorage.getItem("cube_mac") || "CC:A3:00:00:CC:3E";
+    return "CC:A3:00:00:CC:3E";
+  });
 
   const startRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -705,7 +710,9 @@ export default function RubikCubeTrainer() {
       charRef.current = mainChar;
       addLog('✅ fff6 (READ+WRITE+NOTIFY)', 'success');
 
-      const MAC_BYTES = [0xCC, 0xA3, 0x00, 0x00, 0xCC, 0x3E];
+      const macParts = macInput.replace(/[^0-9a-fA-F]/g, "").match(/.{2}/g) || ["CC","A3","00","00","CC","3E"];
+      const MAC_BYTES = macParts.map((h: string) => parseInt(h, 16));
+      addLog(`MAC: ${MAC_BYTES.map((b: number) => b.toString(16).padStart(2,"0").toUpperCase()).join(":")}`, "info");
 
       // Subscribe to notifications
       mainChar.addEventListener('characteristicvaluechanged', ((event: Event) => {
@@ -855,19 +862,32 @@ export default function RubikCubeTrainer() {
       <div className="mobile-layout">
         {/* Cube + Connect */}
         <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, margin: '0 16px', padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-          <div style={{ width: '100%', height: 320, overflow: 'hidden', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: '100%', height: 400, overflow: "hidden", position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div ref={cubeRef} style={{ width: 200, height: 200, touchAction: 'none' }}>
               <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={180} />
             </div>
           </div>
           <div style={{ marginTop: 12, fontSize: 11, color: '#475569' }}>拖拽旋转魔方</div>
           <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 8 }}>
-            <button onClick={connect} disabled={connecting || connected} style={{ flex: 1, padding: '10px 0', fontSize: 14, fontWeight: 600, borderRadius: 10, border: 'none', cursor: connecting ? 'wait' : 'pointer', background: connected ? 'rgba(74,222,128,0.15)' : '#06b6d4', color: connected ? '#4ade80' : '#fff', opacity: connecting ? 0.5 : 1 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={connect} disabled={connecting || connected} style={{ flex: 1, padding: '10px 0', fontSize: 14, fontWeight: 600, borderRadius: 10, border: 'none', cursor: connecting ? 'wait' : 'pointer', background: connected ? 'rgba(74,222,128,0.15)' : '#06b6d4', color: connected ? '#4ade80' : '#fff', opacity: connecting ? 0.5 : 1 }}>
               {connecting ? '连接中...' : connected ? '✅ 已连接' : '🔗 连接魔方'}
             </button>
+                  <button onClick={() => setShowSettings(p => !p)} style={{ padding: '8px 12px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', background: showSettings ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.04)', color: showSettings ? '#22d3ee' : '#94a3b8', cursor: 'pointer' }}>⚙️</button>
+                </div>
+            <button onClick={() => setShowSettings(p => !p)} style={{ padding: '10px 14px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', background: showSettings ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.04)', color: showSettings ? '#22d3ee' : '#94a3b8', cursor: 'pointer' }}>⚙️</button>
             <button onClick={() => setShowLog(p => !p)} style={{ padding: '10px 14px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: '#94a3b8', cursor: 'pointer' }}>📋</button>
           </div>
-          {showLog && (
+          {showSettings && (
+            <div style={{ width: '100%', background: 'rgba(0,0,0,0.3)', borderRadius: 10, padding: 12, marginTop: 8 }}>
+              <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>MAC</div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input type="text" value={macInput} onChange={(e) => setMacInput(e.target.value.toUpperCase())} placeholder="CC:A3:00:00:CC:3E" style={{ flex: 1, padding: '8px 10px', fontSize: 12, fontFamily: 'monospace', background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, color: '#e2e8f0', outline: 'none' }} />
+                <button onClick={() => { localStorage.setItem('cube_mac', macInput); addLog('MAC saved', 'success'); }} style={{ padding: '8px 12px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', background: '#06b6d4', color: '#fff' }}>保存</button>
+              </div>
+            </div>
+          )}
+                    {showLog && (
             <div style={{ width: '100%', maxHeight: 200, overflow: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: 10, padding: 10, marginTop: 8 }}>
               {logs.map(l => <div key={l.id} style={{ fontSize: 10, padding: '2px 0', display: 'flex', gap: 6, color: l.type === 'error' ? '#f87171' : l.type === 'success' ? '#4ade80' : '#94a3b8' }}><span style={{ fontFamily: 'monospace', color: '#475569', flexShrink: 0 }}>{l.time}</span><span>{l.message}</span></div>)}
             </div>
@@ -946,7 +966,7 @@ export default function RubikCubeTrainer() {
 
           {/* Center - 3D Cube + Practice */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, height: 320, overflow: 'hidden' }}>
+            <div style={{ background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, height: 400, overflow: "hidden" }}>
               <div style={{ flex: 1, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 <div ref={cubeRef} style={{ width: 240, height: 240, touchAction: 'none' }}>
                   <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={220} />
@@ -960,7 +980,21 @@ export default function RubikCubeTrainer() {
               </div>
             </div>
 
-            {/* Smart Guidance - Desktop */}
+            {showSettings && (
+              <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>⚙️ 魔方配置</div>
+                <div>
+                  <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 4 }}>MAC 地址</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input type="text" value={macInput} onChange={(e) => setMacInput(e.target.value.toUpperCase())} placeholder="CC:A3:00:00:CC:3E" style={{ flex: 1, padding: '8px 12px', fontSize: 13, fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#e2e8f0', outline: 'none' }} />
+                    <button onClick={() => { localStorage.setItem('cube_mac', macInput); addLog(`MAC saved: ${macInput}`, 'success'); }} style={{ padding: '8px 14px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: '#06b6d4', color: '#fff' }}>保存</button>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#475569', marginTop: 4 }}>XX:XX:XX:XX:XX:XX</div>
+                </div>
+              </div>
+            )}
+
+                        {/* Smart Guidance - Desktop */}
             <SmartGuidance facelets={cubeFacelets} />
 
             {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} />}
