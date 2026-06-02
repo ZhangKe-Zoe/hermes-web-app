@@ -5,6 +5,9 @@ export const metadata: Metadata = {
   description: 'CFOP OLL PLL F2L 交互式学习系统，支持蓝牙连接智能魔方',
 }
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export default function RubikCubeLayout({
   children,
 }: {
