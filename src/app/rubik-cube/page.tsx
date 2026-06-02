@@ -503,10 +503,10 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
   progress: number; time: number; recentMoves: RecentMove[]; onStart: () => void; onReset: () => void;
 }) {
   return (
-    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: 20 }}>
+    <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div>
-          <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#e2e8f0' }}>{formula.id}: {formula.name}</h3>
+          <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#1e293b' }}>{formula.id}: {formula.name}</h3>
           <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>{formula.description}</p>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
@@ -568,7 +568,7 @@ function SmartGuidance({ facelets, onAutoStart }: { facelets: string[] | null; o
 
   return (
     <div style={{
-      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+      background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)',
       borderRadius: 16, padding: 16,
     }}>
       <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -582,7 +582,7 @@ function SmartGuidance({ facelets, onAutoStart }: { facelets: string[] | null; o
       <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>{result.description}</div>
       {result.suggestedFormula && (
         <div style={{
-          background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+          background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)',
           borderRadius: 10, padding: 12,
         }}>
           <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>{result.formulaName}</div>
@@ -625,6 +625,7 @@ export default function RubikCubeTrainer() {
   const [cubeFacelets, setCubeFacelets] = useState<string[] | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [recentMoves, setRecentMoves] = useState<RecentMove[]>([]);
+  const [cubeStage, setCubeStage] = useState("");
   const autoAdvanceRef = useRef(false);
   const [showSettings, setShowSettings] = useState(false);
   const [macInput, setMacInput] = useState(() => {
@@ -676,16 +677,16 @@ export default function RubikCubeTrainer() {
         setMoves(p => [...p, move]);
         if (idx + 1 === expected.length && act === exp) {
           const t = ((Date.now() - (startRef.current || Date.now())) / 1000).toFixed(1);
-          addLog("DONE! " + t + "s", "success"); setPracticing(false);
+          addLog("✅ 完成！" + t + "s", "success"); setPracticing(false);
           if (timerRef.current) clearInterval(timerRef.current);
           if (autoAdvanceRef.current && cubeFacelets) {
             setTimeout(() => {
               const stage = analyzeSolveStage(cubeFacelets);
-              if (stage.stage === "SOLVED") {
-                addLog("ALL SOLVED!", "success");
+              if (stage.stage === "已还原") {
+                addLog("🎉 魔方已还原！", "success");
                 autoAdvanceRef.current = false;
               } else if (stage.suggestedFormula) {
-                addLog("NEXT: " + stage.formulaName, "info");
+                addLog("🧠 下一步: " + stage.formulaName, "info");
                 const nextF: Formula = { id: stage.formulaName, name: stage.description, formula: stage.suggestedFormula, description: stage.explanation, difficulty: "beginner" as const };
                 setFormula(nextF);
                 setMoves([]); setWrongs(new Set()); setHlStep(0);
@@ -754,7 +755,7 @@ export default function RubikCubeTrainer() {
           setBattery(batt);
           addLog(`🧊 Cube Hello! 电量:${batt}%`, 'success');
           const stateBytes = Array.from(msg.slice(7, 34));
-          setCubeFacelets(parseCubeState(stateBytes));
+          const pf = parseCubeState(stateBytes); setCubeFacelets(pf); const sr = analyzeSolveStage(pf); setCubeStage(sr.stage + " " + sr.stageIcon);
           const ack = buildAck(msg);
           charRef.current?.writeValueWithoutResponse(ack).catch(() => {});
         } else if (opcode === 0x03) {
@@ -765,7 +766,7 @@ export default function RubikCubeTrainer() {
           const batt = msg[35];
           if (batt !== undefined) setBattery(batt);
           const stateBytes = Array.from(msg.slice(7, 34));
-          setCubeFacelets(parseCubeState(stateBytes));
+          const pf = parseCubeState(stateBytes); setCubeFacelets(pf); const sr = analyzeSolveStage(pf); setCubeStage(sr.stage + " " + sr.stageIcon);
           if (msg.length >= 92 && msg[91] === 1) {
             const ack = buildAck(msg);
             charRef.current?.writeValueWithoutResponse(ack).catch(() => {});
@@ -814,7 +815,7 @@ export default function RubikCubeTrainer() {
     startRef.current = Date.now();
     setPracticing(true);
     autoAdvanceRef.current = true;
-    addLog("START: " + formulaName, "success");
+    addLog("🚀 训练: " + formulaName, "success");
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => { if (startRef.current) setTime(parseFloat(((Date.now()-startRef.current)/1000).toFixed(1))); }, 100);
   }, [addLog]);
@@ -873,7 +874,7 @@ export default function RubikCubeTrainer() {
   }, []);
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #030712, #0f172a, #030712)', color: '#e2e8f0', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #f0f4f8, #e2e8f0, #f0f4f8)', color: '#e2e8f0', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif' }}>
       {showSafari && <div style={{ background: 'rgba(245,158,11,0.1)', borderBottom: '1px solid rgba(245,158,11,0.2)', padding: '10px 16px', textAlign: 'center', fontSize: 13, color: '#fbbf24' }}>⚠️ Safari不支持蓝牙，请用Chrome/Edge</div>}
 
       {/* ── Header ── */}
@@ -897,7 +898,7 @@ export default function RubikCubeTrainer() {
       {/* ═══════ MOBILE LAYOUT (< 768px) ═══════ */}
       <div className="mobile-layout">
         {/* Cube + Connect */}
-        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, margin: '0 16px', padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+        <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, margin: '0 16px', padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
           <div style={{ width: '100%', height: 400, overflow: "hidden", position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div ref={cubeRef} style={{ width: 200, height: 200, touchAction: 'none' }}>
               <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={180} />
@@ -909,22 +910,22 @@ export default function RubikCubeTrainer() {
                   <button onClick={connect} disabled={connecting || connected} style={{ flex: 1, padding: '10px 0', fontSize: 14, fontWeight: 600, borderRadius: 10, border: 'none', cursor: connecting ? 'wait' : 'pointer', background: connected ? 'rgba(74,222,128,0.15)' : '#06b6d4', color: connected ? '#4ade80' : '#fff', opacity: connecting ? 0.5 : 1 }}>
               {connecting ? '连接中...' : connected ? '✅ 已连接' : '🔗 连接魔方'}
             </button>
-                  <button onClick={() => setShowSettings(p => !p)} style={{ padding: '8px 12px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', background: showSettings ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.04)', color: showSettings ? '#22d3ee' : '#94a3b8', cursor: 'pointer' }}>⚙️</button>
+                  <button onClick={() => setShowSettings(p => !p)} style={{ padding: '8px 12px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showSettings ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.04)', color: showSettings ? '#22d3ee' : '#94a3b8', cursor: 'pointer' }}>⚙️</button>
                 </div>
-            <button onClick={() => setShowSettings(p => !p)} style={{ padding: '10px 14px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', background: showSettings ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.04)', color: showSettings ? '#22d3ee' : '#94a3b8', cursor: 'pointer' }}>⚙️</button>
-            <button onClick={() => setShowLog(p => !p)} style={{ padding: '10px 14px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: '#94a3b8', cursor: 'pointer' }}>📋</button>
+            <button onClick={() => setShowSettings(p => !p)} style={{ padding: '10px 14px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showSettings ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.04)', color: showSettings ? '#22d3ee' : '#94a3b8', cursor: 'pointer' }}>⚙️</button>
+            <button onClick={() => setShowLog(p => !p)} style={{ padding: '10px 14px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.04)', color: '#94a3b8', cursor: 'pointer' }}>📋</button>
           </div>
           {showSettings && (
-            <div style={{ width: '100%', background: 'rgba(0,0,0,0.3)', borderRadius: 10, padding: 12, marginTop: 8 }}>
+            <div style={{ width: '100%', background: 'rgba(0,0,0,0.06)', borderRadius: 10, padding: 12, marginTop: 8 }}>
               <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>MAC</div>
               <div style={{ display: 'flex', gap: 6 }}>
-                <input type="text" value={macInput} onChange={(e) => setMacInput(e.target.value.toUpperCase())} placeholder="CC:A3:00:00:CC:3E" style={{ flex: 1, padding: '8px 10px', fontSize: 12, fontFamily: 'monospace', background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, color: '#e2e8f0', outline: 'none' }} />
+                <input type="text" value={macInput} onChange={(e) => setMacInput(e.target.value.toUpperCase())} placeholder="CC:A3:00:00:CC:3E" style={{ flex: 1, padding: '8px 10px', fontSize: 12, fontFamily: 'monospace', background: 'rgba(0,0,0,0.06)', border: '1px solid rgba(0,0,0,0.12)', borderRadius: 6, color: '#e2e8f0', outline: 'none' }} />
                 <button onClick={() => { localStorage.setItem('cube_mac', macInput); addLog('MAC saved', 'success'); }} style={{ padding: '8px 12px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', background: '#06b6d4', color: '#fff' }}>保存</button>
               </div>
             </div>
           )}
                     {showLog && (
-            <div style={{ width: '100%', maxHeight: 200, overflow: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: 10, padding: 10, marginTop: 8 }}>
+            <div style={{ width: '100%', maxHeight: 200, overflow: 'auto', background: 'rgba(0,0,0,0.06)', borderRadius: 10, padding: 10, marginTop: 8 }}>
               {logs.map(l => <div key={l.id} style={{ fontSize: 10, padding: '2px 0', display: 'flex', gap: 6, color: l.type === 'error' ? '#f87171' : l.type === 'success' ? '#4ade80' : '#94a3b8' }}><span style={{ fontFamily: 'monospace', color: '#475569', flexShrink: 0 }}>{l.time}</span><span>{l.message}</span></div>)}
             </div>
           )}
@@ -938,7 +939,7 @@ export default function RubikCubeTrainer() {
         {/* Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, padding: '12px 16px' }}>
           {[{ l: '正确', v: stats.correct, c: '#4ade80' }, { l: '错误', v: stats.wrong, c: '#f87171' }, { l: '连续', v: stats.streak, c: '#22d3ee' }, { l: '最佳', v: stats.bestStreak, c: '#facc15' }].map(s => (
-            <div key={s.l} style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.04)', padding: '8px 0', textAlign: 'center' }}>
+            <div key={s.l} style={{ background: 'rgba(0,0,0,0.04)', borderRadius: 10, border: '1px solid rgba(0,0,0,0.06)', padding: '8px 0', textAlign: 'center' }}>
               <div style={{ fontSize: 20, fontWeight: 700, color: s.c }}>{s.v}</div>
               <div style={{ fontSize: 10, color: '#64748b' }}>{s.l}</div>
             </div>
@@ -976,13 +977,13 @@ export default function RubikCubeTrainer() {
       <div className="desktop-layout">
         <main style={{ maxWidth: 1400, margin: '0 auto', padding: '0 24px 24px', display: 'grid', gridTemplateColumns: '260px 1fr 320px', gap: 16 }}>
           {/* Left - Formula Library */}
-          <div style={{ background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: 16, borderBottom: '1px solid rgba(255,255,255,0.06)' }}><h2 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>📚 公式库</h2></div>
-            <div style={{ display: 'flex', gap: 4, padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: 16, borderBottom: '1px solid rgba(0,0,0,0.08)' }}><h2 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>📚 公式库</h2></div>
+            <div style={{ display: 'flex', gap: 4, padding: '10px 12px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
               {Object.keys(formulaLibrary).map(c => <button key={c} onClick={() => { setCat(c); setFormula(null); setMoves([]); }} style={{ padding: '6px 14px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: cat === c ? '#06b6d4' : 'rgba(255,255,255,0.06)', color: cat === c ? '#fff' : '#94a3b8' }}>{c}</button>)}
             </div>
-            <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-              {['all', 'beginner', 'intermediate', 'advanced'].map(d => <button key={d} onClick={() => setDiff(d)} style={{ padding: '4px 10px', fontSize: 11, fontWeight: 500, borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)', background: diff === d ? 'rgba(255,255,255,0.08)' : 'transparent', color: diff === d ? '#e2e8f0' : '#64748b', cursor: 'pointer' }}>{d === 'all' ? '全部' : diffMeta(d).label}</button>)}
+            <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+              {['all', 'beginner', 'intermediate', 'advanced'].map(d => <button key={d} onClick={() => setDiff(d)} style={{ padding: '4px 10px', fontSize: 11, fontWeight: 500, borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: diff === d ? 'rgba(255,255,255,0.08)' : 'transparent', color: diff === d ? '#e2e8f0' : '#64748b', cursor: 'pointer' }}>{d === 'all' ? '全部' : diffMeta(d).label}</button>)}
             </div>
             <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px' }}>
               {formulas.map(f => {
@@ -1002,7 +1003,7 @@ export default function RubikCubeTrainer() {
 
           {/* Center - 3D Cube + Practice */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, height: 400, overflow: "hidden" }}>
+            <div style={{ background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, height: 400, overflow: "hidden" }}>
               <div style={{ flex: 1, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 <div ref={cubeRef} style={{ width: 240, height: 240, touchAction: 'none' }}>
                   <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={220} />
@@ -1017,12 +1018,12 @@ export default function RubikCubeTrainer() {
             </div>
 
             {showSettings && (
-              <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: 16 }}>
+              <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>⚙️ 魔方配置</div>
                 <div>
                   <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 4 }}>MAC 地址</label>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <input type="text" value={macInput} onChange={(e) => setMacInput(e.target.value.toUpperCase())} placeholder="CC:A3:00:00:CC:3E" style={{ flex: 1, padding: '8px 12px', fontSize: 13, fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#e2e8f0', outline: 'none' }} />
+                    <input type="text" value={macInput} onChange={(e) => setMacInput(e.target.value.toUpperCase())} placeholder="CC:A3:00:00:CC:3E" style={{ flex: 1, padding: '8px 12px', fontSize: 13, fontFamily: 'monospace', background: 'rgba(0,0,0,0.06)', border: '1px solid rgba(0,0,0,0.12)', borderRadius: 8, color: '#e2e8f0', outline: 'none' }} />
                     <button onClick={() => { localStorage.setItem('cube_mac', macInput); addLog(`MAC saved: ${macInput}`, 'success'); }} style={{ padding: '8px 14px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: '#06b6d4', color: '#fff' }}>保存</button>
                   </div>
                   <div style={{ fontSize: 10, color: '#475569', marginTop: 4 }}>XX:XX:XX:XX:XX:XX</div>
@@ -1038,19 +1039,19 @@ export default function RubikCubeTrainer() {
 
           {/* Right - Stats + Log */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: 16 }}>
+            <div style={{ background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16 }}>
               <h2 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 12px' }}>📊 统计</h2>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 {[{ l: '正确', v: stats.correct, c: '#4ade80' }, { l: '错误', v: stats.wrong, c: '#f87171' }, { l: '连续', v: stats.streak, c: '#22d3ee' }, { l: '最佳', v: stats.bestStreak, c: '#facc15' }].map(s => (
-                  <div key={s.l} style={{ background: 'rgba(0,0,0,0.2)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.04)', padding: '10px 12px', textAlign: 'center' }}>
+                  <div key={s.l} style={{ background: 'rgba(0,0,0,0.04)', borderRadius: 10, border: '1px solid rgba(0,0,0,0.06)', padding: '10px 12px', textAlign: 'center' }}>
                     <div style={{ fontSize: 22, fontWeight: 700, color: s.c }}>{s.v}</div>
                     <div style={{ fontSize: 10, color: '#64748b' }}>{s.l}</div>
                   </div>
                 ))}
               </div>
             </div>
-            <div style={{ background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}><h2 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>📋 日志</h2></div>
+            <div style={{ background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}><h2 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>📋 日志</h2></div>
               <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px' }}>
                 {logs.map(l => <div key={l.id} style={{ fontSize: 11, padding: '3px 0', display: 'flex', gap: 8, color: l.type === 'error' ? '#f87171' : l.type === 'success' ? '#4ade80' : l.type === 'warning' ? '#fbbf24' : '#94a3b8' }}><span style={{ fontFamily: 'monospace', color: '#475569', flexShrink: 0 }}>{l.time}</span><span>{l.message}</span></div>)}
               </div>
