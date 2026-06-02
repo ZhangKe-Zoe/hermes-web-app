@@ -558,7 +558,7 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
 }
 
 // ── Smart Guidance Panel ──
-function SmartGuidance({ facelets }: { facelets: string[] | null }) {
+function SmartGuidance({ facelets, onAutoStart }: { facelets: string[] | null; onAutoStart?: (formulaStr: string, formulaName: string) => void }) {
   if (!facelets || facelets.length < 54) return null;
   const result = analyzeSolveStage(facelets);
   const stageColors: Record<string, string> = {
@@ -591,6 +591,9 @@ function SmartGuidance({ facelets }: { facelets: string[] | null }) {
             color: '#22d3ee', marginBottom: 6, letterSpacing: 1,
           }}>{result.suggestedFormula}</div>
           <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.5 }}>{result.explanation}</div>
+          {onAutoStart && (
+            <button onClick={() => onAutoStart(result.suggestedFormula, result.formulaName)} style={{ padding: "8px 16px", fontSize: 12, fontWeight: 600, borderRadius: 8, border: "none", cursor: "pointer", background: stageColor, color: "#000", width: "100%" }}>▶ 训练: {result.formulaName}</button>
+          )}
         </div>
       )}
       {!result.suggestedFormula && result.explanation && (
@@ -622,6 +625,7 @@ export default function RubikCubeTrainer() {
   const [cubeFacelets, setCubeFacelets] = useState<string[] | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [recentMoves, setRecentMoves] = useState<RecentMove[]>([]);
+  const autoAdvanceRef = useRef(false);
   const [showSettings, setShowSettings] = useState(false);
   const [macInput, setMacInput] = useState(() => {
     if (typeof window !== "undefined") return localStorage.getItem("cube_mac") || "CC:A3:00:00:CC:3E";
@@ -672,8 +676,27 @@ export default function RubikCubeTrainer() {
         setMoves(p => [...p, move]);
         if (idx + 1 === expected.length && act === exp) {
           const t = ((Date.now() - (startRef.current || Date.now())) / 1000).toFixed(1);
-          addLog(`🎉 完成！${t}s`, 'success'); setPracticing(false);
+          addLog("DONE! " + t + "s", "success"); setPracticing(false);
           if (timerRef.current) clearInterval(timerRef.current);
+          if (autoAdvanceRef.current && cubeFacelets) {
+            setTimeout(() => {
+              const stage = analyzeSolveStage(cubeFacelets);
+              if (stage.stage === "SOLVED") {
+                addLog("ALL SOLVED!", "success");
+                autoAdvanceRef.current = false;
+              } else if (stage.suggestedFormula) {
+                addLog("NEXT: " + stage.formulaName, "info");
+                const nextF: Formula = { id: stage.formulaName, name: stage.description, formula: stage.suggestedFormula, description: stage.explanation, difficulty: "beginner" as const };
+                setFormula(nextF);
+                setMoves([]); setWrongs(new Set()); setHlStep(0);
+                setStats({ correct:0, wrong:0, streak:0, bestStreak:0 }); setTime(0);
+                startRef.current = Date.now();
+                setPracticing(true);
+                if (timerRef.current) clearInterval(timerRef.current);
+                timerRef.current = setInterval(() => { if (startRef.current) setTime(parseFloat(((Date.now()-startRef.current)/1000).toFixed(1))); }, 100);
+              }
+            }, 1500);
+          }
         }
       }
     }
@@ -776,12 +799,25 @@ export default function RubikCubeTrainer() {
     } finally {
       connLock.current = false; setConnecting(false);
     }
-  }, [addLog, handleMove]);
+  }, [addLog, handleMove, macInput]);
 
   const selectFormula = useCallback((id: string) => {
     const f = formulas.find(x => x.id === id);
     if (f) { setFormula(f); setMoves([]); setWrongs(new Set()); setHlStep(-1); }
   }, [formulas]);
+
+  const handleAutoStart = useCallback((formulaStr: string, formulaName: string) => {
+    const f: Formula = { id: formulaName, name: formulaName, formula: formulaStr, description: "", difficulty: "beginner" as const };
+    setFormula(f);
+    setMoves([]); setWrongs(new Set()); setHlStep(0);
+    setStats({ correct:0, wrong:0, streak:0, bestStreak:0 }); setTime(0);
+    startRef.current = Date.now();
+    setPracticing(true);
+    autoAdvanceRef.current = true;
+    addLog("START: " + formulaName, "success");
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => { if (startRef.current) setTime(parseFloat(((Date.now()-startRef.current)/1000).toFixed(1))); }, 100);
+  }, [addLog]);
 
   const startPractice = useCallback(() => {
     if (!formula) return;
@@ -896,7 +932,7 @@ export default function RubikCubeTrainer() {
 
         {/* Smart Guidance - Mobile */}
         <div style={{ padding: '12px 16px 0' }}>
-          <SmartGuidance facelets={cubeFacelets} />
+          <SmartGuidance facelets={cubeFacelets} onAutoStart={handleAutoStart} />
         </div>
 
         {/* Stats */}
@@ -995,7 +1031,7 @@ export default function RubikCubeTrainer() {
             )}
 
                         {/* Smart Guidance - Desktop */}
-            <SmartGuidance facelets={cubeFacelets} />
+            <SmartGuidance facelets={cubeFacelets} onAutoStart={handleAutoStart} />
 
             {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} />}
           </div>
