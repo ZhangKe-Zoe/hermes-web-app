@@ -815,6 +815,7 @@ export default function RubikCubeTrainer() {
   const cubeFaceletsRef = useRef<string[]|null>(null);
   const handleMoveRef = useRef<(move: string) => void>(() => {});
   const [showSettings, setShowSettings] = useState(false);
+  const [showNotation, setShowNotation] = useState(false);
   const [macInput, setMacInput] = useState(() => {
     if (typeof window !== "undefined") return localStorage.getItem("cube_mac") || "CC:A3:00:00:CC:3E";
     return "CC:A3:00:00:CC:3E";
@@ -1142,7 +1143,6 @@ export default function RubikCubeTrainer() {
             </button>
                   <button onClick={() => setShowSettings(p => !p)} style={{ padding: '8px 12px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showSettings ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.04)', color: showSettings ? '#22d3ee' : '#94a3b8', cursor: 'pointer' }}>⚙️</button>
                 </div>
-            <button onClick={() => setShowSettings(p => !p)} style={{ padding: '10px 14px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showSettings ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.04)', color: showSettings ? '#22d3ee' : '#94a3b8', cursor: 'pointer' }}>⚙️</button>
             <button onClick={() => setShowLog(p => !p)} style={{ padding: '10px 14px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.04)', color: '#94a3b8', cursor: 'pointer' }}>📋</button>
           </div>
           {showSettings && (
@@ -1177,9 +1177,31 @@ export default function RubikCubeTrainer() {
         </div>
 
         {/* Category tabs */}
-        <div style={{ display: 'flex', gap: 4, padding: '0 16px 8px' }}>
+        <div style={{ display: 'flex', gap: 4, padding: '0 16px 8px', alignItems: 'center' }}>
           {Object.keys(formulaLibrary).map(c => <button key={c} onClick={() => { setCat(c); setFormula(null); setMoves([]); }} style={{ padding: '8px 14px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: cat === c ? '#06b6d4' : 'rgba(255,255,255,0.06)', color: cat === c ? '#fff' : '#94a3b8' }}>{c}</button>)}
+          <button onClick={() => setShowNotation(p => !p)} style={{ padding: '6px 10px', fontSize: 11, borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: showNotation ? 'rgba(6,182,212,0.15)' : 'transparent', color: showNotation ? '#22d3ee' : '#64748b', cursor: 'pointer', marginLeft: 'auto' }}>❓ 符号</button>
         </div>
+        {showNotation && (
+          <div style={{ padding: '10px 16px', margin: '0 16px 8px', background: 'rgba(6,182,212,0.05)', borderRadius: 10, border: '1px solid rgba(0,0,0,0.08)' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: '#475569' }}>公式符号说明</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 11 }}>
+              <div><b>R</b> = 右面顺时针</div>
+              <div><b>R{"'"}</b> = 右面逆时针</div>
+              <div><b>L</b> = 左面顺时针</div>
+              <div><b>L{"'"}</b> = 左面逆时针</div>
+              <div><b>U</b> = 上面顺时针</div>
+              <div><b>U{"'"}</b> = 上面逆时针</div>
+              <div><b>D</b> = 下面顺时针</div>
+              <div><b>D{"'"}</b> = 下面逆时针</div>
+              <div><b>F</b> = 前面顺时针</div>
+              <div><b>F{"'"}</b> = 前面逆时针</div>
+              <div><b>B</b> = 后面顺时针</div>
+              <div><b>B{"'"}</b> = 后面逆时针</div>
+              <div><b>M</b> = 中层</div>
+              <div><b>R2</b> = 转180°</div>
+            </div>
+          </div>
+        )}
 
         {/* Formula list */}
         <div style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '0 16px 12px', WebkitOverflowScrolling: 'touch' }}>
@@ -1208,7 +1230,36 @@ export default function RubikCubeTrainer() {
         <main style={{ maxWidth: 1400, margin: '0 auto', padding: '0 24px 24px', display: 'grid', gridTemplateColumns: '260px 1fr 320px', gap: 16 }}>
           {/* Left - Formula Library */}
           <div style={{ background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: 16, borderBottom: '1px solid rgba(0,0,0,0.08)' }}><h2 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>📚 公式库</h2></div>
+            <div style={{ padding: 16, borderBottom: '1px solid rgba(0,0,0,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>📚 公式库</h2>
+              <button onClick={() => setShowNotation(p => !p)} style={{ padding: '4px 8px', fontSize: 12, borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: showNotation ? 'rgba(6,182,212,0.15)' : 'transparent', color: showNotation ? '#22d3ee' : '#64748b', cursor: 'pointer' }}>❓ 符号</button>
+            </div>
+            {showNotation && (
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(0,0,0,0.08)', background: 'rgba(6,182,212,0.05)' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: '#475569' }}>魔方公式符号说明</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11 }}>
+                  <div><b>R</b> = 右面顺时针</div>
+                  <div><b>R{"'"}</b> = 右面逆时针</div>
+                  <div><b>L</b> = 左面顺时针</div>
+                  <div><b>L{"'"}</b> = 左面逆时针</div>
+                  <div><b>U</b> = 上面顺时针</div>
+                  <div><b>U{"'"}</b> = 上面逆时针</div>
+                  <div><b>D</b> = 下面顺时针</div>
+                  <div><b>D{"'"}</b> = 下面逆时针</div>
+                  <div><b>F</b> = 前面顺时针</div>
+                  <div><b>F{"'"}</b> = 前面逆时针</div>
+                  <div><b>B</b> = 后面顺时针</div>
+                  <div><b>B{"'"}</b> = 后面逆时针</div>
+                  <div><b>M</b> = 中层（左→右）</div>
+                  <div><b>M{"'"}</b> = 中层（右→左）</div>
+                  <div><b>R2</b> = 右面转180°</div>
+                  <div><b>U2</b> = 上面转180°</div>
+                  <div><b>r</b> = 右层+中层</div>
+                  <div><b>x</b> = 整体沿R转</div>
+                </div>
+                <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 8 }}>顺时针 = 从该面看向魔方的顺时针方向</div>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 4, padding: '10px 12px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
               {Object.keys(formulaLibrary).map(c => <button key={c} onClick={() => { setCat(c); setFormula(null); setMoves([]); }} style={{ padding: '6px 14px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: cat === c ? '#06b6d4' : 'rgba(255,255,255,0.06)', color: cat === c ? '#fff' : '#94a3b8' }}>{c}</button>)}
             </div>

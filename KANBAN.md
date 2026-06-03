@@ -1,6 +1,6 @@
 # 🎲 Rubik's Cube Trainer - Kanban Board
 
-## ✅ Done (10)
+## ✅ Done (12/12) 🎉
 
 | # | Task | Commit | Status |
 |:--|:-----|:-------|:-------|
@@ -14,17 +14,8 @@
 | 8 | Complete CFOP formula library (57 OLL + 21 PLL + 41 F2L) | `0d9ae21` | ✅ deployed |
 | 9 | Practice history & localStorage persistence | `7d94336` | ✅ deployed |
 | 10 | Scramble generator (WCA-style 20 moves) | `0d9ae21` | ✅ deployed |
-
-## 🔵 In Progress (0)
-
-*None*
-
-## 📋 Todo (2)
-
-| # | Task | Priority | Description |
-|:--|:-----|:---------|:------------|
-| 11 | Timer mode | 🟢 Low | Standalone speedcubing timer (stackmat-style, space to start/stop) |
-| 12 | Export/import data | 🟢 Low | Save/load practice data + history as JSON file |
+| 11 | Timer mode (space bar, AO5/AO12) | `230374c` | ✅ deployed |
+| 12 | Export/import data (JSON) | `230374c` | ✅ deployed |
 
 ## 🔗 Links
 
@@ -33,4 +24,4 @@
 - **BLE Protocol**: https://codeberg.org/Flying-Toast/qiyi_smartcube_protocol
 
 ---
-*Last updated: 2026-06-02*
+*Last updated: 2026-06-02 — All tasks completed! 🎉*
