@@ -142,6 +142,19 @@ function isOpposite(a: string, b: string): boolean {
   return pairs[a] === b;
 }
 
+
+// ── Export/Import Data ──
+function exportData(history: PracticeSession[], solves: number[]): string {
+  return JSON.stringify({ history, solves, exportDate: new Date().toISOString() }, null, 2);
+}
+
+function importData(json: string): { history: PracticeSession[]; solves: number[] } | null {
+  try {
+    const data = JSON.parse(json);
+    return { history: data.history || [], solves: data.solves || [] };
+  } catch { return null; }
+}
+
 const formulaLibrary: Record<string, Formula[]> = {
   OLL: [
     // Dot cases (1-2)
@@ -786,6 +799,17 @@ export default function RubikCubeTrainer() {
     return [];
   });
   const [showHistory, setShowHistory] = useState(false);
+  const [timerMode, setTimerMode] = useState(false);
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerTime, setTimerTime] = useState(0);
+  const [timerReady, setTimerReady] = useState(false);
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const [solves, setSolves] = useState<number[]>(() => {
+    if (typeof window !== "undefined") {
+      try { return JSON.parse(localStorage.getItem("timer_solves") || "[]"); } catch { return []; }
+    }
+    return [];
+  });
   const [cubeStage, setCubeStage] = useState("");
   const autoAdvanceRef = useRef(false);
   const cubeFaceletsRef = useRef<string[]|null>(null);
@@ -1000,7 +1024,46 @@ export default function RubikCubeTrainer() {
     startRef.current = null; if (timerRef.current) clearInterval(timerRef.current);
   }, []);
 
-  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); if (timerIntervalRef.current) clearInterval(timerIntervalRef.current); }, []);
+
+  // Timer keyboard handler
+  useEffect(() => {
+    if (!timerMode) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (!timerRunning && !timerReady) {
+          setTimerReady(true);
+        }
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (timerReady && !timerRunning) {
+          setTimerRunning(true);
+          setTimerReady(false);
+          setTimerTime(0);
+          const start = Date.now();
+          timerIntervalRef.current = setInterval(() => {
+            setTimerTime(Date.now() - start);
+          }, 10);
+        } else if (timerRunning) {
+          setTimerRunning(false);
+          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+          const finalTime = timerTime;
+          setSolves(prev => {
+            const next = [finalTime, ...prev].slice(0, 200);
+            try { localStorage.setItem("timer_solves", JSON.stringify(next)); } catch {}
+            return next;
+          });
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); };
+  }, [timerMode, timerRunning, timerReady, timerTime]);
   useEffect(() => { if (typeof window !== 'undefined' && /^((?!chrome|android).)*safari/i.test(navigator.userAgent) && !('bluetooth' in navigator)) setShowSafari(true); }, []);
 
   const progress = formula ? (moves.length / formula.formula.split(' ').length) * 100 : 0;
@@ -1073,6 +1136,7 @@ export default function RubikCubeTrainer() {
           <div style={{ marginTop: 12, fontSize: 11, color: '#475569' }}>拖拽旋转魔方</div>
           <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 8 }}>
             <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => setTimerMode(p => !p)} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: timerMode ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.9)', color: timerMode ? '#0891b2' : '#475569', cursor: 'pointer' }}>{'\u23F1'} {'\u8ba1\u65f6'}</button>
                   <button onClick={connect} disabled={connecting || connected} style={{ flex: 1, padding: '10px 0', fontSize: 14, fontWeight: 600, borderRadius: 10, border: 'none', cursor: connecting ? 'wait' : 'pointer', background: connected ? 'rgba(74,222,128,0.15)' : '#06b6d4', color: connected ? '#4ade80' : '#fff', opacity: connecting ? 0.5 : 1 }}>
               {connecting ? '连接中...' : connected ? '✅ 已连接' : '🔗 连接魔方'}
             </button>
@@ -1198,7 +1262,33 @@ export default function RubikCubeTrainer() {
               </div>
             )}
 
-                        {/* Scramble Display */}
+                        {/* Timer Mode Display */}
+            {timerMode && (
+              <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 24, textAlign: 'center' }}>
+                <div style={{ fontSize: 48, fontWeight: 700, fontFamily: '"SF Mono", Menlo, monospace', color: timerRunning ? '#059669' : timerReady ? '#d97706' : '#1e293b', marginBottom: 16, letterSpacing: 2 }}>
+                  {timerReady ? 'READY' : (timerTime / 1000).toFixed(2)}
+                </div>
+                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
+                  {timerReady ? "\u677e\u5f00\u7a7a\u683c\u5f00\u59cb" : timerRunning ? "\u6309\u7a7a\u683c\u505c\u6b62" : "\u6309\u4f4f\u7a7a\u683c\u51c6\u5907"}
+                </div>
+                {solves.length > 0 && (
+                  <div style={{ marginTop: 16, textAlign: 'left' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: '#475569' }}>{'\u6700\u8fd1\u89e3\u9501'} ({solves.length})</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
+                      {solves.slice(0, 10).map((s, i) => (
+                        <div key={i} style={{ fontSize: 11, padding: '4px 6px', background: 'rgba(0,0,0,0.03)', borderRadius: 4, textAlign: 'center', fontFamily: 'monospace' }}>{(s/1000).toFixed(2)}</div>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 8 }}>
+                      AO5: {solves.length >= 5 ? (solves.slice(0,5).reduce((a,b)=>a+b,0)/5/1000).toFixed(2) : '-'} | 
+                      AO12: {solves.length >= 12 ? (solves.slice(0,12).reduce((a,b)=>a+b,0)/12/1000).toFixed(2) : '-'}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Scramble Display */}
             {scramble && (
               <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -1243,6 +1333,40 @@ export default function RubikCubeTrainer() {
             )}
 
           </div>
+
+            {/* Export/Import */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => {
+                const data = exportData(history, solves);
+                const blob = new Blob([data], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'rubik-cube-data.json'; a.click();
+                URL.revokeObjectURL(url);
+                addLog("\u{1F4E5} \u6570\u636e\u5df2\u5bfc\u51fa", "success");
+              }} style={{ flex: 1, padding: '8px 12px', fontSize: 11, fontWeight: 600, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.9)', color: '#475569', cursor: 'pointer' }}>{'\u{1F4E4}'} {'\u5bfc\u51fa'}</button>
+              <label style={{ flex: 1, padding: '8px 12px', fontSize: 11, fontWeight: 600, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.9)', color: '#475569', cursor: 'pointer', textAlign: 'center', display: 'block' }}>
+                {'\u{1F4E5}'} {'\u5bfc\u5165'}
+                <input type="file" accept=".json" style={{ display: 'none' }} onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    const result = importData(ev.target?.result as string);
+                    if (result) {
+                      setHistory(result.history);
+                      setSolves(result.solves);
+                      try { localStorage.setItem("practice_history", JSON.stringify(result.history)); } catch {}
+                      try { localStorage.setItem("timer_solves", JSON.stringify(result.solves)); } catch {}
+                      addLog("\u{1F4E5} \u6570\u636e\u5df2\u5bfc\u5165", "success");
+                    } else {
+                      addLog("\u274C \u6587\u4ef6\u683c\u5f0f\u9519\u8bef", "error");
+                    }
+                  };
+                  reader.readAsText(file);
+                }} />
+              </label>
+            </div>
 
           {/* Right - Stats + Log */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
