@@ -113,31 +113,183 @@ function parseCubeState(stateBytes: number[]): string[] {
 }
 
 // ── Formula Library ──
+
+// ── Scramble Generator (WCA-style) ──
+function generateScramble(length: number = 20): string {
+  const moves = ["U", "D", "R", "L", "F", "B"];
+  const modifiers = ["", "'", "2"];
+  const scramble: string[] = [];
+  let lastFace = "";
+  let secondLastFace = "";
+  
+  for (let i = 0; i < length; i++) {
+    let face: string;
+    do {
+      face = moves[Math.floor(Math.random() * moves.length)];
+    } while (face === lastFace || (face === secondLastFace && isOpposite(face, lastFace)));
+    
+    const mod = modifiers[Math.floor(Math.random() * modifiers.length)];
+    scramble.push(face + mod);
+    secondLastFace = lastFace;
+    lastFace = face;
+  }
+  return scramble.join(" ");
+}
+
+function isOpposite(a: string, b: string): boolean {
+  const pairs: Record<string, string> = { U: "D", D: "U", R: "L", L: "R", F: "B", B: "F" };
+  return pairs[a] === b;
+}
+
 const formulaLibrary: Record<string, Formula[]> = {
   OLL: [
-    { id: 'OLL-1', name: '点→十字', formula: "F R U R' U' F'", description: '顶层十字', difficulty: 'beginner' },
-    { id: 'OLL-2', name: '点→十字', formula: "F U R U' R' F'", description: '另一种十字', difficulty: 'beginner' },
-    { id: 'OLL-3', name: '十字→全黄', formula: "R U R' U R U2 R'", description: '鱼形', difficulty: 'intermediate' },
-    { id: 'OLL-4', name: '十字→全黄', formula: "R U2 R' U' R U' R'", description: '反鱼形', difficulty: 'intermediate' },
-    { id: 'OLL-21', name: '十字+两侧', formula: "R U2 R' U' R U R' U' R U' R'", description: '21号', difficulty: 'advanced' },
-    { id: 'OLL-26', name: '反鱼形', formula: "R U2 R' U' R U' R'", description: '反鱼形', difficulty: 'beginner' },
-    { id: 'OLL-27', name: '正鱼形', formula: "R U R' U R U2 R'", description: '正鱼形', difficulty: 'beginner' },
+    // Dot cases (1-2)
+    { id: 'OLL-1', name: 'All Edges Flipped', formula: "R U2 R2 F R F' U2 R' F R F'", description: 'OLL 1', difficulty: 'advanced' },
+    { id: 'OLL-2', name: 'Dot + Adjacent', formula: "F R U R' U' F' f R U R' U' f'", description: 'OLL 2', difficulty: 'advanced' },
+    // L-shape cases (3-6)
+    { id: 'OLL-3', name: 'L-Shape 1', formula: "f R U R' U' f' U' F R U R' U' F'", description: 'OLL 3', difficulty: 'advanced' },
+    { id: 'OLL-4', name: 'L-Shape 2', formula: "f R U R' U' f' U F R U R' U' F'", description: 'OLL 4', difficulty: 'advanced' },
+    { id: 'OLL-5', name: 'L-Shape 3', formula: "r' U2 R U R' U r", description: 'OLL 5 (Square)', difficulty: 'advanced' },
+    { id: 'OLL-6', name: 'L-Shape 4', formula: "r U2 R' U' R U' r'", description: 'OLL 6 (Square)', difficulty: 'advanced' },
+    // Line cases (7-8)
+    { id: 'OLL-7', name: 'Line + Corners', formula: "r U R' U R U2 r'", description: 'OLL 7', difficulty: 'advanced' },
+    { id: 'OLL-8', name: 'Line + Corners 2', formula: "r' U' R U' R' U2 r", description: 'OLL 8', difficulty: 'advanced' },
+    // Cross cases (9-16)
+    { id: 'OLL-9', name: 'Knight Move 1', formula: "R U R' U' R' F R2 U R' U' F'", description: 'OLL 9', difficulty: 'advanced' },
+    { id: 'OLL-10', name: 'Knight Move 2', formula: "R U R' U R' F R F' R U2 R'", description: 'OLL 10', difficulty: 'advanced' },
+    { id: 'OLL-11', name: 'Knight Move 3', formula: "r U R' U R U2 r2 U' R U' R' U2 r", description: 'OLL 11', difficulty: 'advanced' },
+    { id: 'OLL-12', name: 'Knight Move 4', formula: "F R U R' U' F' U F R U R' U' F'", description: 'OLL 12', difficulty: 'advanced' },
+    { id: 'OLL-13', name: 'Antisune 1', formula: "r U' r' U' r U r' F' U F", description: 'OLL 13', difficulty: 'advanced' },
+    { id: 'OLL-14', name: 'Antisune 2', formula: "R' F R U R' F' R F U' F'", description: 'OLL 14', difficulty: 'advanced' },
+    { id: 'OLL-15', name: 'Antisune 3', formula: "r' U' r R' U' R U r' U r", description: 'OLL 15', difficulty: 'advanced' },
+    { id: 'OLL-16', name: 'Antisune 4', formula: "r U r' R U R' U' r U' r'", description: 'OLL 16', difficulty: 'advanced' },
+    // All Corners Oriented (17-20)
+    { id: 'OLL-17', name: 'Chameleon 1', formula: "R U R' U R' F R F' U2 R' F R F'", description: 'OLL 17', difficulty: 'advanced' },
+    { id: 'OLL-18', name: 'Chameleon 2', formula: "r U R' U R U2 r2 U' R U' R' U2 r", description: 'OLL 18', difficulty: 'advanced' },
+    { id: 'OLL-19', name: 'Chameleon 3', formula: "R U2 R2 F R F' U2 M' U R U' r'", description: 'OLL 19', difficulty: 'advanced' },
+    { id: 'OLL-20', name: 'Chameleon 4', formula: "M U R U R' U' M' R' F R F'", description: 'OLL 20', difficulty: 'advanced' },
+    // Dot + Cross (21-27)
+    { id: 'OLL-21', name: 'H-Pattern', formula: "R U2 R' U' R U R' U' R U' R'", description: 'OLL 21', difficulty: 'advanced' },
+    { id: 'OLL-22', name: 'Pi-Pattern', formula: "R U2 R2 U' R2 U' R2 U2 R", description: 'OLL 22', difficulty: 'advanced' },
+    { id: 'OLL-23', name: 'Headlights', formula: "R2 D R' U2 R D' R' U2 R'", description: 'OLL 23', difficulty: 'advanced' },
+    { id: 'OLL-24', name: 'Chameleon', formula: "r U R' U' r' F R F'", description: 'OLL 24', difficulty: 'advanced' },
+    { id: 'OLL-25', name: 'Bowtie', formula: "F' r U R' U' r' F R", description: 'OLL 25', difficulty: 'advanced' },
+    { id: 'OLL-26', name: 'Antisune', formula: "R U2 R' U' R U' R'", description: 'OLL 26', difficulty: 'beginner' },
+    { id: 'OLL-27', name: 'Sune', formula: "R U R' U R U2 R'", description: 'OLL 27', difficulty: 'beginner' },
+    // Fish shapes (28-35)
+    { id: 'OLL-28', name: 'Fish 1', formula: "r U R' U' r' R U R U' R'", description: 'OLL 28', difficulty: 'advanced' },
+    { id: 'OLL-29', name: 'Fish 2', formula: "R U R' U' R U' R' F' U' F R U R'", description: 'OLL 29', difficulty: 'advanced' },
+    { id: 'OLL-30', name: 'Fish 3', formula: "F R' F R2 U' R' U' R U R' F2", description: 'OLL 30', difficulty: 'advanced' },
+    { id: 'OLL-31', name: 'Fish 4', formula: "R' U' F U R U' R' F' R", description: 'OLL 31', difficulty: 'advanced' },
+    { id: 'OLL-32', name: 'Fish 5', formula: "S R U R' U' R' F R f'", description: 'OLL 32', difficulty: 'advanced' },
+    { id: 'OLL-33', name: 'Fish 6', formula: "R U R' U' R' F R F'", description: 'OLL 33', difficulty: 'intermediate' },
+    { id: 'OLL-34', name: 'Fish 7', formula: "R U R2 U' R' F R U R U' F'", description: 'OLL 34', difficulty: 'advanced' },
+    { id: 'OLL-35', name: 'Fish 8', formula: "R U2 R2 F R F' R U2 R'", description: 'OLL 35', difficulty: 'advanced' },
+    // Small L-shapes (36-43)
+    { id: 'OLL-36', name: 'L-Shape A', formula: "L' U' L U' L' U L U L F' L' F", description: 'OLL 36', difficulty: 'advanced' },
+    { id: 'OLL-37', name: 'L-Shape B', formula: "F R U' R' U' R U R' F'", description: 'OLL 37', difficulty: 'advanced' },
+    { id: 'OLL-38', name: 'L-Shape C', formula: "R U R' U R U' R' U' R' F R F'", description: 'OLL 38', difficulty: 'advanced' },
+    { id: 'OLL-39', name: 'L-Shape D', formula: "L F' L' U' L U F U' L'", description: 'OLL 39', difficulty: 'advanced' },
+    { id: 'OLL-40', name: 'L-Shape E', formula: "R' F R U R' U' F' U R", description: 'OLL 40', difficulty: 'advanced' },
+    { id: 'OLL-41', name: 'L-Shape F', formula: "R U R' U R U2 R' F R U R' U' F'", description: 'OLL 41', difficulty: 'advanced' },
+    { id: 'OLL-42', name: 'L-Shape G', formula: "R' U' R U' R' U2 R F R U R' U' F'", description: 'OLL 42', difficulty: 'advanced' },
+    { id: 'OLL-43', name: 'L-Shape H', formula: "F' U' L' U L F", description: 'OLL 43', difficulty: 'advanced' },
+    // Lightning bolts (44-47)
+    { id: 'OLL-44', name: 'Lightning 1', formula: "F U R U' R' F'", description: 'OLL 44', difficulty: 'beginner' },
+    { id: 'OLL-45', name: 'Lightning 2', formula: "F R U R' U' F'", description: 'OLL 45', difficulty: 'beginner' },
+    { id: 'OLL-46', name: 'Lightning 3', formula: "R' U' R' F R F' U R", description: 'OLL 46', difficulty: 'advanced' },
+    { id: 'OLL-47', name: 'Lightning 4', formula: "R' U' R' F R F' R' F R F' U R", description: 'OLL 47', difficulty: 'advanced' },
+    // T-shapes (48-51)
+    { id: 'OLL-48', name: 'T-Shape 1', formula: "F R U R' U' F'", description: 'OLL 48', difficulty: 'beginner' },
+    { id: 'OLL-49', name: 'T-Shape 2', formula: "R B' R2 F R2 B R2 F' R", description: 'OLL 49', difficulty: 'advanced' },
+    { id: 'OLL-50', name: 'T-Shape 3', formula: "r' U r U r' U' r U r' U' M' U r", description: 'OLL 50', difficulty: 'advanced' },
+    { id: 'OLL-51', name: 'T-Shape 4', formula: "F U R U' R' U R U' R' F'", description: 'OLL 51', difficulty: 'advanced' },
+    // C-shapes (52-55)
+    { id: 'OLL-52', name: 'C-Shape 1', formula: "R U R' U' M' U R U' r'", description: 'OLL 52', difficulty: 'advanced' },
+    { id: 'OLL-53', name: 'C-Shape 2', formula: "r' U' R U' R' U R U' R' U2 r", description: 'OLL 53', difficulty: 'advanced' },
+    { id: 'OLL-54', name: 'C-Shape 3', formula: "r U R' U R U' R' U R U2 r'", description: 'OLL 54', difficulty: 'advanced' },
+    { id: 'OLL-55', name: 'C-Shape 4', formula: "R U2 R2 U' R U' R' U2 F R F'", description: 'OLL 55', difficulty: 'advanced' },
+    // W-shapes (56-57)
+    { id: 'OLL-56', name: 'W-Shape 1', formula: "r U r' U R U' R' U R U' R' r U' r'", description: 'OLL 56', difficulty: 'advanced' },
+    { id: 'OLL-57', name: 'W-Shape 2', formula: "R U R' U' M' U R U' r'", description: 'OLL 57', difficulty: 'advanced' },
   ],
   PLL: [
-    { id: 'PLL-Ua', name: 'Ua', formula: "R U R' U R' U' R2 U' R' U R' U R", description: '顺时针三棱换', difficulty: 'intermediate' },
-    { id: 'PLL-Ub', name: 'Ub', formula: "R' U R' U' R2 U' R' U R U R2", description: '逆时针三棱换', difficulty: 'intermediate' },
-    { id: 'PLL-H', name: 'H', formula: "M2 U M2 U2 M2 U M2", description: '对棱换', difficulty: 'beginner' },
-    { id: 'PLL-T', name: 'T', formula: "R U R' U' R' F R2 U' R' U' R U R' F'", description: 'T排列', difficulty: 'intermediate' },
+    // Edge Cycles
+    { id: 'PLL-Ua', name: 'Ua Permutation', formula: "M2 U M U2 M' U M2", description: '3-edge cycle (CCW)', difficulty: 'intermediate' },
+    { id: 'PLL-Ub', name: 'Ub Permutation', formula: "M2 U' M U2 M' U' M2", description: '3-edge cycle (CW)', difficulty: 'intermediate' },
+    { id: 'PLL-H', name: 'H Permutation', formula: "M2 U M2 U2 M2 U M2", description: 'Opposite edge swap', difficulty: 'beginner' },
+    { id: 'PLL-Z', name: 'Z Permutation', formula: "M' U M2 U M2 U M' U2 M2", description: 'Adjacent edge swap', difficulty: 'intermediate' },
+    // Corner Cycles
+    { id: 'PLL-Aa', name: 'Aa Permutation', formula: "x R' U R' D2 R U' R' D2 R2 x'", description: '3-corner cycle (CCW)', difficulty: 'intermediate' },
+    { id: 'PLL-Ab', name: 'Ab Permutation', formula: "x R2 D2 R U R' D2 R U' R x'", description: '3-corner cycle (CW)', difficulty: 'intermediate' },
+    { id: 'PLL-E', name: 'E Permutation', formula: "x' R U' R' D R U R' D' R U R' D R U' R' D' x", description: '2-corner swap (diagonal)', difficulty: 'advanced' },
+    // Double Swaps
+    { id: 'PLL-T', name: 'T Permutation', formula: "R U R' U' R' F R2 U' R' U' R U R' F'", description: 'Adjacent corner+edge swap', difficulty: 'intermediate' },
+    { id: 'PLL-F', name: 'F Permutation', formula: "R' U' F' R U R' U' R' F R2 U' R' U' R U R' U R", description: 'Adjacent corner+edge swap', difficulty: 'advanced' },
+    { id: 'PLL-V', name: 'V Permutation', formula: "R' U R' U' y R' F' R2 U' R' U R' F R F", description: 'Diagonal corner+edge swap', difficulty: 'advanced' },
+    { id: 'PLL-Y', name: 'Y Permutation', formula: "F R U' R' U' R U R' F' R U R' U' R' F R F'", description: 'Diagonal corner+edge swap', difficulty: 'advanced' },
+    { id: 'PLL-Ja', name: 'Ja Permutation', formula: "x R2 F R F' R U2 r' U r U2 x'", description: 'Adjacent corner+edge swap', difficulty: 'advanced' },
+    { id: 'PLL-Jb', name: 'Jb Permutation', formula: "R U R' F' R U R' U' R' F R2 U' R'", description: 'Adjacent corner+edge swap', difficulty: 'intermediate' },
+    { id: 'PLL-Ra', name: 'Ra Permutation', formula: "R U' R' U' R U R D R' U' R D' R' U2 R'", description: 'Adjacent corner+edge swap', difficulty: 'advanced' },
+    { id: 'PLL-Rb', name: 'Rb Permutation', formula: "R' U2 R U2 R' F R U R' U' R' F' R2", description: 'Adjacent corner+edge swap', difficulty: 'advanced' },
+    // G Permutations
+    { id: 'PLL-Ga', name: 'Ga Permutation', formula: "R2 U R' U R' U' R U' R2 U' D R' U R D'", description: '4-corner+edge cycle', difficulty: 'advanced' },
+    { id: 'PLL-Gb', name: 'Gb Permutation', formula: "R' U' R U D' R2 U R' U R U' R U' R2 D", description: '4-corner+edge cycle', difficulty: 'advanced' },
+    { id: 'PLL-Gc', name: 'Gc Permutation', formula: "R2 U' R U' R U R' U R2 U D' R U' R' D", description: '4-corner+edge cycle', difficulty: 'advanced' },
+    { id: 'PLL-Gd', name: 'Gd Permutation', formula: "R U R' U' D R2 U' R U' R' U R' U R2 D'", description: '4-corner+edge cycle', difficulty: 'advanced' },
+    // N Permutations
+    { id: 'PLL-Na', name: 'Na Permutation', formula: "R U R' U R U R' F' R U R' U' R' F R2 U' R' U2 R U' R'", description: 'Double adjacent swap', difficulty: 'advanced' },
+    { id: 'PLL-Nb', name: 'Nb Permutation', formula: "R' U R U' R' F' U' F R U R' F R' F' R U' R", description: 'Double adjacent swap', difficulty: 'advanced' },
   ],
   F2L: [
-    { id: 'F2L-1', name: '基础1', formula: "U R U' R'", description: '角在底棱在顶', difficulty: 'beginner' },
-    { id: 'F2L-2', name: '基础2', formula: "U' F' U F", description: '角在底棱在顶', difficulty: 'beginner' },
-    { id: 'F2L-3', name: '基础3', formula: "R U' R'", description: '都在底层', difficulty: 'beginner' },
-    { id: 'F2L-5', name: '角朝上', formula: "R U2 R' U' R U R'", description: '白色朝上', difficulty: 'intermediate' },
+    // Basic cases - corner white on bottom
+    { id: 'F2L-1', name: 'Basic Insert', formula: "U R U' R'", description: 'Corner in slot, edge on top', difficulty: 'beginner' },
+    { id: 'F2L-2', name: 'Basic Insert 2', formula: "U' F' U F", description: 'Corner in slot, edge on top (mirror)', difficulty: 'beginner' },
+    { id: 'F2L-3', name: 'Already Paired', formula: "R U' R'", description: 'Pair already formed', difficulty: 'beginner' },
+    { id: 'F2L-4', name: 'Already Paired 2', formula: "F' U F", description: 'Pair already formed (mirror)', difficulty: 'beginner' },
+    // Corner white on top
+    { id: 'F2L-5', name: 'White Up 1', formula: "R U2 R' U' R U R'", description: 'Corner white facing up', difficulty: 'intermediate' },
+    { id: 'F2L-6', name: 'White Up 2', formula: "F' U2 F U F' U' F", description: 'Corner white facing up (mirror)', difficulty: 'intermediate' },
+    { id: 'F2L-7', name: 'White Up 3', formula: "U R U2 R' U R U' R'", description: 'Corner white facing up, edge adjacent', difficulty: 'intermediate' },
+    { id: 'F2L-8', name: 'White Up 4', formula: "U' F' U2 F U' F' U F", description: 'Corner white facing up, edge adjacent (mirror)', difficulty: 'intermediate' },
+    // Corner in slot, edge on top
+    { id: 'F2L-9', name: 'Edge Top 1', formula: "U' R U R' U2 R U' R'", description: 'Corner in slot wrong, edge on top', difficulty: 'intermediate' },
+    { id: 'F2L-10', name: 'Edge Top 2', formula: "U F' U' F U2 F' U F", description: 'Corner in slot wrong, edge on top (mirror)', difficulty: 'intermediate' },
+    { id: 'F2L-11', name: 'Edge Top 3', formula: "U' R U2 R' U2 R U' R'", description: 'Edge and corner on top, different slots', difficulty: 'intermediate' },
+    { id: 'F2L-12', name: 'Edge Top 4', formula: "U F' U2 F U2 F' U F", description: 'Edge and corner on top (mirror)', difficulty: 'intermediate' },
+    // Corner white on side
+    { id: 'F2L-13', name: 'White Side 1', formula: "R U' R' U R U' R'", description: 'Corner white facing right', difficulty: 'intermediate' },
+    { id: 'F2L-14', name: 'White Side 2', formula: "F' U F U' F' U F", description: 'Corner white facing left', difficulty: 'intermediate' },
+    { id: 'F2L-15', name: 'White Side 3', formula: "R U R' U' R U R'", description: 'Corner white facing front', difficulty: 'intermediate' },
+    { id: 'F2L-16', name: 'White Side 4', formula: "F' U' F U F' U' F", description: 'Corner white facing back', difficulty: 'intermediate' },
+    // Advanced cases
+    { id: 'F2L-17', name: 'Stuck 1', formula: "R U2 R' U' R U2 R' U' R U R'", description: 'Edge flipped in slot', difficulty: 'advanced' },
+    { id: 'F2L-18', name: 'Stuck 2', formula: "F' U2 F U F' U2 F U F' U' F", description: 'Edge flipped in slot (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-19', name: 'Stuck 3', formula: "U R U' R' U' F' U F", description: 'Both in slot, wrong orientation', difficulty: 'advanced' },
+    { id: 'F2L-20', name: 'Stuck 4', formula: "U' F' U F U R U' R'", description: 'Both in slot, wrong orientation (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-21', name: 'Pair Separated 1', formula: "R U' R' U2 F' U' F", description: 'Pair separated across slot', difficulty: 'advanced' },
+    { id: 'F2L-22', name: 'Pair Separated 2', formula: "F' U F U2 R U R'", description: 'Pair separated across slot (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-23', name: 'Edge in Slot 1', formula: "R U R' U' R U R' U' R U R'", description: 'Edge in wrong slot', difficulty: 'advanced' },
+    { id: 'F2L-24', name: 'Edge in Slot 2', formula: "F' U' F U F' U' F U F' U' F", description: 'Edge in wrong slot (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-25', name: 'Corner Top Edge Slot', formula: "R U' R' U R U' R' U2 R U' R'", description: 'Corner on top, edge in slot', difficulty: 'advanced' },
+    { id: 'F2L-26', name: 'Corner Top Edge Slot 2', formula: "F' U F U' F' U F U2 F' U F", description: 'Corner on top, edge in slot (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-27', name: 'Both Wrong 1', formula: "R U' R' U R U2 R' U R U' R'", description: 'Both pieces wrong position', difficulty: 'advanced' },
+    { id: 'F2L-28', name: 'Both Wrong 2', formula: "F' U F U' F' U2 F U' F' U F", description: 'Both pieces wrong position (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-29', name: 'Triple Sexy', formula: "R U R' U' R U R' U' R U R'", description: 'Triple sexy move insert', difficulty: 'advanced' },
+    { id: 'F2L-30', name: 'Triple Anti-Sexy', formula: "F' U' F U F' U' F U F' U' F", description: 'Triple anti-sexy insert', difficulty: 'advanced' },
+    { id: 'F2L-31', name: 'Advanced 1', formula: "R U' R' U F' U' F", description: 'Quick insert variant', difficulty: 'advanced' },
+    { id: 'F2L-32', name: 'Advanced 2', formula: "F' U F U' R U R'", description: 'Quick insert variant (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-33', name: 'Advanced 3', formula: "U' R U R' U R U R'", description: 'Setup then insert', difficulty: 'advanced' },
+    { id: 'F2L-34', name: 'Advanced 4', formula: "U F' U' F U' F' U' F", description: 'Setup then insert (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-35', name: 'Advanced 5', formula: "R U' R' U R U' R' U2 R U' R'", description: 'Extended insert', difficulty: 'advanced' },
+    { id: 'F2L-36', name: 'Advanced 6', formula: "F' U F U' F' U F U2 F' U F", description: 'Extended insert (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-37', name: 'Edge Case 1', formula: "R U R' U2 R U' R' U R U R'", description: 'Edge special case', difficulty: 'advanced' },
+    { id: 'F2L-38', name: 'Edge Case 2', formula: "F' U' F U2 F' U F U' F' U' F", description: 'Edge special case (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-39', name: 'Corner Case 1', formula: "R U' R' U F' U2 F U' F' U2 F", description: 'Corner special case', difficulty: 'advanced' },
+    { id: 'F2L-40', name: 'Corner Case 2', formula: "F' U F U' R U2 R' U R U2 R'", description: 'Corner special case (mirror)', difficulty: 'advanced' },
+    { id: 'F2L-41', name: 'Last Resort', formula: "R U R' U' R U R' U' R U R' U' R U R'", description: 'When nothing else works', difficulty: 'advanced' },
   ],
-};
-
-// ── 3D Cube Component (responsive, colors from real cube) ──
+};// ── 3D Cube Component (responsive, colors from real cube) ──
 // Facelet layout for 3×3 cube:
 // U face (white on top): facelets[0..8] arranged 3×3
 // R face (red on right): facelets[9..17]
@@ -625,6 +777,7 @@ export default function RubikCubeTrainer() {
   const [cubeFacelets, setCubeFacelets] = useState<string[] | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [recentMoves, setRecentMoves] = useState<RecentMove[]>([]);
+  const [scramble, setScramble] = useState("");
   const [cubeStage, setCubeStage] = useState("");
   const autoAdvanceRef = useRef(false);
   const cubeFaceletsRef = useRef<string[]|null>(null);
@@ -1020,6 +1173,7 @@ export default function RubikCubeTrainer() {
                   {connecting ? '连接中...' : connected ? '✅ 已连接' : '🔗 连接魔方'}
                 </button>
               </div>
+              <button onClick={() => setScramble(generateScramble())} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.9)', color: '#475569', cursor: 'pointer' }}>{'\u{1F504}'} {'\u6253\u4e71'}</button>
             </div>
 
             {showSettings && (
@@ -1036,7 +1190,18 @@ export default function RubikCubeTrainer() {
               </div>
             )}
 
-                        {/* Smart Guidance - Desktop */}
+                        {/* Scramble Display */}
+            {scramble && (
+              <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700 }}>{'\u{1F500}'} {'\u6253\u4e71\u516c\u5f0f'}</span>
+                  <button onClick={() => setScramble(generateScramble())} style={{ padding: '4px 12px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.9)', color: '#475569', cursor: 'pointer' }}>{'\u{1F504}'} {'\u6362\u4e00\u4e2a'}</button>
+                </div>
+                <div style={{ fontFamily: '"SF Mono", Menlo, monospace', fontSize: 13, color: '#1e293b', lineHeight: 1.8, wordBreak: 'break-all' }}>{scramble}</div>
+              </div>
+            )}
+
+            {/* Smart Guidance - Desktop */}
             <SmartGuidance facelets={cubeFacelets} onAutoStart={handleAutoStart} />
 
             {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} />}
