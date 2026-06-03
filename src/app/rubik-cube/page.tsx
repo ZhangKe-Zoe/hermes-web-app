@@ -834,6 +834,10 @@ export default function RubikCubeTrainer() {
   const [showSettings, setShowSettings] = useState(false);
   const [showNotation, setShowNotation] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('cube_theme') === 'dark';
+    return false;
+  });
   const [macInput, setMacInput] = useState(() => {
     if (typeof window !== "undefined") return localStorage.getItem("cube_mac") || "CC:A3:00:00:CC:3E";
     return "CC:A3:00:00:CC:3E";
@@ -1163,6 +1167,25 @@ export default function RubikCubeTrainer() {
   }, [timerMode, timerRunning, timerReady, timerTime]);
   useEffect(() => { if (typeof window !== 'undefined' && /^((?!chrome|android).)*safari/i.test(navigator.userAgent) && !('bluetooth' in navigator)) setShowSafari(true); }, []);
 
+  // ── Keyboard shortcuts ──
+  useEffect(() => {
+    const handleShortcuts = (e: KeyboardEvent) => {
+      // Don't trigger when typing in input fields
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'f' || e.key === 'F') {
+        if (formula) setFullscreen(p => !p);
+      } else if (e.key === 'Escape') {
+        if (fullscreen) setFullscreen(false);
+      } else if (e.key === ' ' && formula && !timerMode) {
+        e.preventDefault();
+        if (!practicing) startPractice();
+        else resetPractice();
+      }
+    };
+    window.addEventListener('keydown', handleShortcuts);
+    return () => window.removeEventListener('keydown', handleShortcuts);
+  }, [formula, practicing, timerMode, fullscreen]);
+
   const progress = useMemo(() => {
     if (!formula) return 0;
     // Count expanded steps (same logic as expandSteps)
@@ -1220,7 +1243,7 @@ export default function RubikCubeTrainer() {
   }, []);
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #f0f4f8, #e2e8f0, #f0f4f8)', color: '#1e293b', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: darkMode ? 'linear-gradient(135deg, #0f172a, #1e293b, #0f172a)' : 'linear-gradient(135deg, #f0f4f8, #e2e8f0, #f0f4f8)', color: darkMode ? '#e2e8f0' : '#1e293b', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif', transition: 'background 0.3s, color 0.3s' }}>
       {showSafari && <div style={{ background: 'rgba(245,158,11,0.1)', borderBottom: '1px solid rgba(245,158,11,0.2)', padding: '10px 16px', textAlign: 'center', fontSize: 13, color: '#fbbf24' }}>⚠️ Safari不支持蓝牙，请用Chrome/Edge</div>}
 
       {/* ── Header ── */}
@@ -1233,6 +1256,7 @@ export default function RubikCubeTrainer() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             {lastMove && <div style={{ fontFamily: '"SF Mono", Menlo, monospace', fontSize: 18, fontWeight: 700, color: '#22d3ee', padding: '3px 10px', background: 'rgba(34,211,238,0.1)', borderRadius: 8, border: '1px solid rgba(34,211,238,0.2)' }}>{lastMove}</div>}
             {battery !== null && <div style={{ fontSize: 11, color: '#94a3b8', padding: '3px 8px', background: 'rgba(255,255,255,0.04)', borderRadius: 12 }}>🔋 {battery}%</div>}
+            <button onClick={() => { setDarkMode(p => { const n = !p; localStorage.setItem('cube_theme', n ? 'dark' : 'light'); return n; }); }} style={{ padding: '5px 10px', fontSize: 12, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.04)', color: '#64748b', cursor: 'pointer' }}>{darkMode ? '☀️' : '🌙'}</button>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 20, fontSize: 11, background: connected ? 'rgba(74,222,128,0.1)' : 'rgba(255,255,255,0.04)', border: `1px solid ${connected ? 'rgba(74,222,128,0.3)' : 'rgba(255,255,255,0.08)'}`, color: connected ? '#4ade80' : '#64748b' }}>
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: connected ? '#4ade80' : '#475569' }} />
               {connStatus}
