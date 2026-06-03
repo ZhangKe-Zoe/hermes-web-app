@@ -668,6 +668,21 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
   formula: Formula; practicing: boolean; moves: string[]; wrongs: Set<number>; hlStep: number;
   progress: number; time: number; recentMoves: RecentMove[]; onStart: () => void; onReset: () => void;
 }) {
+  // Expand formula steps for display (same logic as matching)
+  const expandedSteps: { display: string; isSkip: boolean; isDouble?: boolean; part?: number }[] = formula.formula.split(/\s+/).filter(Boolean).flatMap((step): { display: string; isSkip: boolean; isDouble?: boolean; part?: number }[] => {
+    const s = step.replace(/['']/g, "'");
+    const m = s.match(/^([A-Za-z])(['2]?)$/);
+    if (m) {
+      const face = m[1].toUpperCase();
+      const mod = m[2];
+      const bleFaces = ['U', 'D', 'R', 'L', 'F', 'B'];
+      const isBleFace = bleFaces.includes(face) && s[0] === s[0].toUpperCase();
+      if (!isBleFace) return [{ display: step, isSkip: true }];
+      if (mod === '2') return [{ display: `${face}2`, isSkip: false, isDouble: true, part: 1 }, { display: `${face}2`, isSkip: false, isDouble: true, part: 2 }];
+      return [{ display: step, isSkip: false }];
+    }
+    return [{ display: step, isSkip: true }];
+  });
   return (
     <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -700,15 +715,16 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
       )}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-        {formula.formula.split(' ').map((m, i) => (
+        {expandedSteps.map((step, i) => (
           <span key={i} style={{
-            fontFamily: '"SF Mono", Menlo, monospace', fontSize: 16, fontWeight: 600,
-            padding: '6px 12px', borderRadius: 8,
-            background: i === hlStep ? 'rgba(74,222,128,0.2)' : wrongs.has(i) ? 'rgba(248,113,113,0.2)' : i < moves.length ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)',
-            color: i === hlStep ? '#4ade80' : wrongs.has(i) ? '#f87171' : i < moves.length ? '#94a3b8' : '#64748b',
-            border: `1px solid ${i === hlStep ? 'rgba(74,222,128,0.3)' : wrongs.has(i) ? 'rgba(248,113,113,0.3)' : 'rgba(255,255,255,0.06)'}`,
-            transition: 'all 0.15s'
-          }}>{m}</span>
+            fontFamily: '"SF Mono", Menlo, monospace', fontSize: step.isDouble ? 13 : 16, fontWeight: 600,
+            padding: step.isDouble ? '4px 8px' : '6px 12px', borderRadius: 8,
+            background: step.isSkip ? 'rgba(251,191,36,0.1)' : i === hlStep ? 'rgba(74,222,128,0.2)' : wrongs.has(i) ? 'rgba(248,113,113,0.2)' : i < moves.length ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)',
+            color: step.isSkip ? '#fbbf24' : i === hlStep ? '#4ade80' : wrongs.has(i) ? '#f87171' : i < moves.length ? '#94a3b8' : '#64748b',
+            border: `1px solid ${step.isSkip ? 'rgba(251,191,36,0.2)' : i === hlStep ? 'rgba(74,222,128,0.3)' : wrongs.has(i) ? 'rgba(248,113,113,0.3)' : 'rgba(255,255,255,0.06)'}`,
+            transition: 'all 0.15s',
+            opacity: step.isDouble && step.part === 2 ? 0.7 : 1,
+          }}>{step.display}{step.isDouble && step.part === 2 ? '↳' : ''}{step.isSkip ? '⏭' : ''}</span>
         ))}
       </div>
       {practicing && (
@@ -716,7 +732,7 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
           <div style={{ height: 3, background: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg,#22d3ee,#3b82f6)', borderRadius: 2, transition: 'width 0.3s' }} />
           </div>
-          <div style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 8 }}>{time.toFixed(1)}s · 步骤 {moves.length}/{formula.formula.split(' ').length}</div>
+          <div style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 8 }}>{time.toFixed(1)}s · 步骤 {moves.length}/{expandedSteps.length}</div>
         </>
       )}
     </div>
@@ -840,6 +856,42 @@ export default function RubikCubeTrainer() {
     return diff === 'all' ? l : l.filter(f => f.difficulty === diff);
   }, [cat, diff]);
 
+  // ── Expand formula steps for BLE matching ──
+  // BLE only sends single 90° face turns (L, L', R, R', U, U', D, D', F, F', B, B')
+  // Need to: expand double moves (U2 → [U, U]), skip undetectable moves (M, r, x, y, z)
+  const expandSteps = useCallback((formulaStr: string): { display: string; ble: string | null }[] => {
+    const raw = formulaStr.split(/\s+/).filter(Boolean);
+    const result: { display: string; ble: string | null }[] = [];
+    for (const step of raw) {
+      const s = step.replace(/['']/g, "'"); // normalize curly quotes
+      // Match: face letter + optional modifier (' or 2)
+      const m = s.match(/^([A-Za-z])(['2]?)$/);
+      if (m) {
+        const face = m[1].toUpperCase();
+        const mod = m[2];
+        // BLE-detectable faces: U D R L F B (lowercase r l u d f b and M S E x y z are NOT detectable)
+        const bleFaces = ['U', 'D', 'R', 'L', 'F', 'B'];
+        const isBleFace = bleFaces.includes(face) && s[0] === s[0].toUpperCase(); // only uppercase
+        if (!isBleFace) {
+          // Not detectable by BLE (M, r, x, y, z, etc.) - display but auto-skip during matching
+          result.push({ display: step, ble: null });
+        } else if (mod === '2') {
+          // Double move: expand to two single moves
+          result.push({ display: step, ble: face });
+          result.push({ display: `${step}(2)`, ble: face });
+        } else {
+          // Single move (with or without ')
+          const bleMove = mod === "'" ? `${face}'` : face;
+          result.push({ display: step, ble: bleMove });
+        }
+      } else {
+        // Unknown format - skip
+        result.push({ display: step, ble: null });
+      }
+    }
+    return result;
+  }, []);
+
   const handleMove = useCallback((move: string) => {
     setLastMove(move);
     addLog(`🎲 ${move}`, 'success');
@@ -847,23 +899,33 @@ export default function RubikCubeTrainer() {
     let moveType: RecentMove['type'] = 'valid';
 
     if (formula && practicing) {
-      const expected = formula.formula.split(' ');
+      const steps = expandSteps(formula.formula);
       const idx = moves.length;
-      if (idx < expected.length) {
-        const exp = expected[idx].replace(/\s+/g, '').toUpperCase();
-        const act = move.replace(/\s+/g, '').toUpperCase();
+      if (idx < steps.length) {
+        const step = steps[idx];
+        if (step.ble === null) {
+          // Undetectable move (M, r, x, y, z, etc.) - auto-skip
+          addLog(`⏭ 跳过 ${step.display}（BLE不可检测）`, 'warning');
+          setMoves(p => [...p, `⏭${step.display}`]);
+          setHlStep(idx + 1);
+          // Continue to next step (recurse-like via setTimeout)
+          setTimeout(() => handleMoveRef.current(move), 10);
+          return;
+        }
+        const exp = step.ble.replace(/['']/g, "'").toUpperCase();
+        const act = move.replace(/['']/g, "'").toUpperCase();
         if (act === exp) {
           moveType = 'matched';
           setStats(p => { const ns = p.streak + 1; return { correct: p.correct + 1, wrong: p.wrong, streak: ns, bestStreak: Math.max(p.bestStreak, ns) }; });
-          addLog(`✅ ${idx + 1}: ${move}`, 'success'); setHlStep(idx + 1);
+          addLog(`✅ ${idx + 1}: ${step.display}`, 'success'); setHlStep(idx + 1);
         } else {
           moveType = 'wrong';
           setStats(p => ({ ...p, wrong: p.wrong + 1, streak: 0 }));
           setWrongs(p => new Set(p).add(idx));
-          addLog(`❌ 期望${expected[idx]}，实际${move}`, 'error');
+          addLog(`❌ 期望${step.display}，实际${move}`, 'error');
         }
         setMoves(p => [...p, move]);
-        if (idx + 1 === expected.length && act === exp) {
+        if (idx + 1 === steps.length && act === exp) {
           const t = ((Date.now() - (startRef.current || Date.now())) / 1000).toFixed(1);
           addLog("✅ 完成！" + t + "s", "success"); setPracticing(false);
           if (timerRef.current) clearInterval(timerRef.current);
@@ -1067,7 +1129,27 @@ export default function RubikCubeTrainer() {
   }, [timerMode, timerRunning, timerReady, timerTime]);
   useEffect(() => { if (typeof window !== 'undefined' && /^((?!chrome|android).)*safari/i.test(navigator.userAgent) && !('bluetooth' in navigator)) setShowSafari(true); }, []);
 
-  const progress = formula ? (moves.length / formula.formula.split(' ').length) * 100 : 0;
+  const progress = useMemo(() => {
+    if (!formula) return 0;
+    // Count expanded steps (same logic as expandSteps)
+    let totalSteps = 0;
+    for (const step of formula.formula.split(/\s+/).filter(Boolean)) {
+      const s = step.replace(/['']/g, "'");
+      const m = s.match(/^([A-Za-z])(['2]?)$/);
+      if (m) {
+        const face = m[1].toUpperCase();
+        const mod = m[2];
+        const bleFaces = ['U', 'D', 'R', 'L', 'F', 'B'];
+        const isBleFace = bleFaces.includes(face) && s[0] === s[0].toUpperCase();
+        if (!isBleFace) totalSteps += 1; // skip step
+        else if (mod === '2') totalSteps += 2; // double move
+        else totalSteps += 1;
+      } else {
+        totalSteps += 1;
+      }
+    }
+    return totalSteps > 0 ? (moves.length / totalSteps) * 100 : 0;
+  }, [formula, moves.length]);
 
   // Last 5 recent moves for display
   const recentMovesDisplay = recentMoves.slice(0, 5);
