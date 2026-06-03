@@ -283,7 +283,7 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
     return {
       stage: '底层十字', stageIcon: '➕',
       description: `将${colorName(dColor)}色十字拼在底层`,
-      suggestedFormula: '', formulaName: '', explanation: '先找到白色棱块，逐一对齐到底面和侧面中心'
+      suggestedFormula: "F2 U' L R' F2 L' R U' F2", formulaName: '底层十字引导', explanation: '将白色棱块逐一对齐到底面十字位置，先找到白色棱块转到顶层再对齐'
     };
   }
 
@@ -300,8 +300,8 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
     return {
       stage: 'F2L', stageIcon: '🧩',
       description: '完成前两层角棱配对',
-      suggestedFormula: "U R U' R'", formulaName: 'F2L基础',
-      explanation: '找到顶层角棱对，配对后插入对应槽位'
+      suggestedFormula: "U R U' R'", formulaName: 'F2L基础公式',
+      explanation: '在顶层找到角棱配对，用U R U\' R\'插入对应槽位。转动魔方观察顶层角块和棱块的位置关系'
     };
   }
 
@@ -627,6 +627,7 @@ export default function RubikCubeTrainer() {
   const [recentMoves, setRecentMoves] = useState<RecentMove[]>([]);
   const [cubeStage, setCubeStage] = useState("");
   const autoAdvanceRef = useRef(false);
+  const cubeFaceletsRef = useRef<string[]|null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [macInput, setMacInput] = useState(() => {
     if (typeof window !== "undefined") return localStorage.getItem("cube_mac") || "CC:A3:00:00:CC:3E";
@@ -679,9 +680,9 @@ export default function RubikCubeTrainer() {
           const t = ((Date.now() - (startRef.current || Date.now())) / 1000).toFixed(1);
           addLog("✅ 完成！" + t + "s", "success"); setPracticing(false);
           if (timerRef.current) clearInterval(timerRef.current);
-          if (autoAdvanceRef.current && cubeFacelets) {
+          if (autoAdvanceRef.current && cubeFaceletsRef.current) {
             setTimeout(() => {
-              const stage = analyzeSolveStage(cubeFacelets);
+              const stage = analyzeSolveStage(cubeFaceletsRef.current!);
               if (stage.stage === "已还原") {
                 addLog("🎉 魔方已还原！", "success");
                 autoAdvanceRef.current = false;
@@ -755,7 +756,7 @@ export default function RubikCubeTrainer() {
           setBattery(batt);
           addLog(`🧊 Cube Hello! 电量:${batt}%`, 'success');
           const stateBytes = Array.from(msg.slice(7, 34));
-          const pf = parseCubeState(stateBytes); setCubeFacelets(pf); const sr = analyzeSolveStage(pf); setCubeStage(sr.stage + " " + sr.stageIcon);
+          const pf = parseCubeState(stateBytes); setCubeFacelets(pf); cubeFaceletsRef.current = pf; const sr = analyzeSolveStage(pf); setCubeStage(sr.stage + " " + sr.stageIcon);
           const ack = buildAck(msg);
           charRef.current?.writeValueWithoutResponse(ack).catch(() => {});
         } else if (opcode === 0x03) {
@@ -766,7 +767,7 @@ export default function RubikCubeTrainer() {
           const batt = msg[35];
           if (batt !== undefined) setBattery(batt);
           const stateBytes = Array.from(msg.slice(7, 34));
-          const pf = parseCubeState(stateBytes); setCubeFacelets(pf); const sr = analyzeSolveStage(pf); setCubeStage(sr.stage + " " + sr.stageIcon);
+          const pf = parseCubeState(stateBytes); setCubeFacelets(pf); cubeFaceletsRef.current = pf; const sr = analyzeSolveStage(pf); setCubeStage(sr.stage + " " + sr.stageIcon);
           if (msg.length >= 92 && msg[91] === 1) {
             const ack = buildAck(msg);
             charRef.current?.writeValueWithoutResponse(ack).catch(() => {});
@@ -874,7 +875,7 @@ export default function RubikCubeTrainer() {
   }, []);
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #f0f4f8, #e2e8f0, #f0f4f8)', color: '#e2e8f0', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #f0f4f8, #e2e8f0, #f0f4f8)', color: '#1e293b', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif' }}>
       {showSafari && <div style={{ background: 'rgba(245,158,11,0.1)', borderBottom: '1px solid rgba(245,158,11,0.2)', padding: '10px 16px', textAlign: 'center', fontSize: 13, color: '#fbbf24' }}>⚠️ Safari不支持蓝牙，请用Chrome/Edge</div>}
 
       {/* ── Header ── */}
