@@ -664,9 +664,9 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
 }
 
 // ── Formula Detail Card (shared between mobile & desktop) ──
-function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, time, recentMoves, onStart, onReset }: {
+function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, time, recentMoves, onStart, onReset, onFullscreen }: {
   formula: Formula; practicing: boolean; moves: string[]; wrongs: Set<number>; hlStep: number;
-  progress: number; time: number; recentMoves: RecentMove[]; onStart: () => void; onReset: () => void;
+  progress: number; time: number; recentMoves: RecentMove[]; onStart: () => void; onReset: () => void; onFullscreen?: () => void;
 }) {
   // Expand formula steps for display (same logic as matching)
   const expandedSteps: { display: string; isSkip: boolean; isDouble?: boolean; part?: number }[] = formula.formula.split(/\s+/).filter(Boolean).flatMap((step): { display: string; isSkip: boolean; isDouble?: boolean; part?: number }[] => {
@@ -691,6 +691,7 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
           <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>{formula.description}</p>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
+          {onFullscreen && <button onClick={onFullscreen} style={{ padding: '8px 12px', fontSize: 13, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.06)', color: '#64748b', cursor: 'pointer' }}>⛶</button>}
           {!practicing ? <button onClick={onStart} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: '#06b6d4', color: '#fff' }}>▶ 开始</button> : <button onClick={onReset} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.06)', color: '#94a3b8' }}>⏹ 重置</button>}
         </div>
       </div>
@@ -832,6 +833,7 @@ export default function RubikCubeTrainer() {
   const handleMoveRef = useRef<(move: string) => void>(() => {});
   const [showSettings, setShowSettings] = useState(false);
   const [showNotation, setShowNotation] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [macInput, setMacInput] = useState(() => {
     if (typeof window !== "undefined") return localStorage.getItem("cube_mac") || "CC:A3:00:00:CC:3E";
     return "CC:A3:00:00:CC:3E";
@@ -846,15 +848,43 @@ export default function RubikCubeTrainer() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const charRef = useRef<any>(null);
 
+  // ── Formula search ──
+  const [searchQuery, setSearchQuery] = useState('');
+
   const addLog = useCallback((msg: string, type: LogEntry['type'] = 'info') => {
     logId.current++;
     setLogs(p => [{ id: logId.current, time: new Date().toLocaleTimeString(), message: msg, type }, ...p].slice(0, 60));
   }, []);
 
+  // ── Sound feedback ──
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const playSound = useCallback((type: 'match' | 'wrong' | 'complete' | 'skip') => {
+    try {
+      if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const ctx = audioCtxRef.current;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.value = 0.15;
+      if (type === 'match') { osc.frequency.value = 880; osc.type = 'sine'; gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15); }
+      else if (type === 'wrong') { osc.frequency.value = 220; osc.type = 'sawtooth'; gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25); }
+      else if (type === 'complete') { osc.frequency.value = 1320; osc.type = 'sine'; gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4); }
+      else { osc.frequency.value = 440; osc.type = 'triangle'; gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08); }
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.5);
+    } catch { /* audio not available */ }
+  }, []);
+
   const formulas = useMemo(() => {
-    const l = formulaLibrary[cat] || [];
-    return diff === 'all' ? l : l.filter(f => f.difficulty === diff);
-  }, [cat, diff]);
+    let l = formulaLibrary[cat] || [];
+    if (diff !== 'all') l = l.filter(f => f.difficulty === diff);
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      l = l.filter(f => f.id.toLowerCase().includes(q) || f.name.toLowerCase().includes(q) || f.formula.toLowerCase().includes(q) || (f.description && f.description.toLowerCase().includes(q)));
+    }
+    return l;
+  }, [cat, diff, searchQuery]);
 
   // ── Expand formula steps for BLE matching ──
   // BLE only sends single 90° face turns (L, L', R, R', U, U', D, D', F, F', B, B')
@@ -906,6 +936,7 @@ export default function RubikCubeTrainer() {
         if (step.ble === null) {
           // Undetectable move (M, r, x, y, z, etc.) - auto-skip
           addLog(`⏭ 跳过 ${step.display}（BLE不可检测）`, 'warning');
+          playSound('skip');
           setMoves(p => [...p, `⏭${step.display}`]);
           setHlStep(idx + 1);
           // Continue to next step (recurse-like via setTimeout)
@@ -916,10 +947,12 @@ export default function RubikCubeTrainer() {
         const act = move.replace(/['']/g, "'").toUpperCase();
         if (act === exp) {
           moveType = 'matched';
+          playSound('match');
           setStats(p => { const ns = p.streak + 1; return { correct: p.correct + 1, wrong: p.wrong, streak: ns, bestStreak: Math.max(p.bestStreak, ns) }; });
           addLog(`✅ ${idx + 1}: ${step.display}`, 'success'); setHlStep(idx + 1);
         } else {
           moveType = 'wrong';
+          playSound('wrong');
           setStats(p => ({ ...p, wrong: p.wrong + 1, streak: 0 }));
           setWrongs(p => new Set(p).add(idx));
           addLog(`❌ 期望${step.display}，实际${move}`, 'error');
@@ -928,6 +961,7 @@ export default function RubikCubeTrainer() {
         if (idx + 1 === steps.length && act === exp) {
           const t = ((Date.now() - (startRef.current || Date.now())) / 1000).toFixed(1);
           addLog("✅ 完成！" + t + "s", "success"); setPracticing(false);
+          playSound('complete');
           if (timerRef.current) clearInterval(timerRef.current);
           if (autoAdvanceRef.current && cubeFaceletsRef.current) {
             setTimeout(() => {
@@ -1260,8 +1294,12 @@ export default function RubikCubeTrainer() {
 
         {/* Category tabs */}
         <div style={{ display: 'flex', gap: 4, padding: '0 16px 8px', alignItems: 'center' }}>
-          {Object.keys(formulaLibrary).map(c => <button key={c} onClick={() => { setCat(c); setFormula(null); setMoves([]); }} style={{ padding: '8px 14px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: cat === c ? '#06b6d4' : 'rgba(255,255,255,0.06)', color: cat === c ? '#fff' : '#94a3b8' }}>{c}</button>)}
+          {Object.keys(formulaLibrary).map(c => <button key={c} onClick={() => { setCat(c); setFormula(null); setMoves([]); setSearchQuery(''); }} style={{ padding: '8px 14px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: cat === c ? '#06b6d4' : 'rgba(255,255,255,0.06)', color: cat === c ? '#fff' : '#94a3b8' }}>{c}</button>)}
           <button onClick={() => setShowNotation(p => !p)} style={{ padding: '6px 10px', fontSize: 11, borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: showNotation ? 'rgba(6,182,212,0.15)' : 'transparent', color: showNotation ? '#22d3ee' : '#64748b', cursor: 'pointer', marginLeft: 'auto' }}>❓ 符号</button>
+        </div>
+        {/* Search box - mobile */}
+        <div style={{ padding: '0 16px 8px' }}>
+          <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="🔍 搜索公式 (名称/编号/序列)" style={{ width: '100%', padding: '8px 12px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.9)', color: '#1e293b', outline: 'none', boxSizing: 'border-box' }} />
         </div>
         {showNotation && (
           <div style={{ padding: '10px 16px', margin: '0 16px 8px', background: 'rgba(6,182,212,0.05)', borderRadius: 10, border: '1px solid rgba(0,0,0,0.08)' }}>
@@ -1302,7 +1340,7 @@ export default function RubikCubeTrainer() {
         {/* Formula detail */}
         {formula && (
           <div style={{ padding: '0 16px 16px' }}>
-            <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} />
+            <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} />
           </div>
         )}
       </div>
@@ -1343,10 +1381,14 @@ export default function RubikCubeTrainer() {
               </div>
             )}
             <div style={{ display: 'flex', gap: 4, padding: '10px 12px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
-              {Object.keys(formulaLibrary).map(c => <button key={c} onClick={() => { setCat(c); setFormula(null); setMoves([]); }} style={{ padding: '6px 14px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: cat === c ? '#06b6d4' : 'rgba(255,255,255,0.06)', color: cat === c ? '#fff' : '#94a3b8' }}>{c}</button>)}
+              {Object.keys(formulaLibrary).map(c => <button key={c} onClick={() => { setCat(c); setFormula(null); setMoves([]); setSearchQuery(''); }} style={{ padding: '6px 14px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: cat === c ? '#06b6d4' : 'rgba(255,255,255,0.06)', color: cat === c ? '#fff' : '#94a3b8' }}>{c}</button>)}
             </div>
             <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
               {['all', 'beginner', 'intermediate', 'advanced'].map(d => <button key={d} onClick={() => setDiff(d)} style={{ padding: '4px 10px', fontSize: 11, fontWeight: 500, borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: diff === d ? 'rgba(255,255,255,0.08)' : 'transparent', color: diff === d ? '#e2e8f0' : '#64748b', cursor: 'pointer' }}>{d === 'all' ? '全部' : diffMeta(d).label}</button>)}
+            </div>
+            {/* Search box - desktop */}
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+              <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="🔍 搜索公式" style={{ width: '100%', padding: '6px 10px', fontSize: 12, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.9)', color: '#1e293b', outline: 'none', boxSizing: 'border-box' }} />
             </div>
             <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px' }}>
               {formulas.map(f => {
@@ -1435,7 +1477,7 @@ export default function RubikCubeTrainer() {
             {/* Smart Guidance - Desktop */}
             <SmartGuidance facelets={cubeFacelets} onAutoStart={handleAutoStart} />
 
-            {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} />}
+            {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} />}
             {/* History Toggle */}
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setShowHistory(p => !p)} style={{ flex: 1, padding: '8px 16px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showHistory ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.9)', color: showHistory ? '#0891b2' : '#475569', cursor: 'pointer' }}>{'\U0001F4CA'} {'\u5386\u53f2\u8bb0\u5f55'}</button>
@@ -1523,6 +1565,67 @@ export default function RubikCubeTrainer() {
           </div>
         </main>
       </div>
+
+      {/* Fullscreen Practice Mode */}
+      {fullscreen && formula && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999,
+          background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          padding: 20,
+        }}>
+          <button onClick={() => setFullscreen(false)} style={{
+            position: 'absolute', top: 16, right: 16, padding: '8px 16px', fontSize: 14,
+            borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.1)',
+            color: '#e2e8f0', cursor: 'pointer', zIndex: 10000,
+          }}>✕ 退出全屏</button>
+          <div style={{ fontSize: 24, fontWeight: 700, color: '#e2e8f0', marginBottom: 8 }}>{formula.id}: {formula.name}</div>
+          <div style={{ fontSize: 14, color: '#94a3b8', marginBottom: 24 }}>{formula.description}</div>
+          <div style={{ marginBottom: 24 }}>
+            <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={280} />
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 24, maxWidth: 600 }}>
+            {formula.formula.split(/\s+/).filter(Boolean).flatMap((step): { display: string; isSkip: boolean }[] => {
+              const s = step.replace(/['']/g, "'");
+              const m = s.match(/^([A-Za-z])(['2]?)$/);
+              if (m) {
+                const face = m[1].toUpperCase();
+                const mod = m[2];
+                const bleFaces = ['U', 'D', 'R', 'L', 'F', 'B'];
+                const isBleFace = bleFaces.includes(face) && s[0] === s[0].toUpperCase();
+                if (!isBleFace) return [{ display: step, isSkip: true }];
+                if (mod === '2') return [{ display: `${face}2`, isSkip: false }, { display: `${face}2`, isSkip: false }];
+                return [{ display: step, isSkip: false }];
+              }
+              return [{ display: step, isSkip: true }];
+            }).map((step, i) => (
+              <span key={i} style={{
+                fontFamily: '"SF Mono", Menlo, monospace', fontSize: 22, fontWeight: 600,
+                padding: '10px 18px', borderRadius: 10,
+                background: step.isSkip ? 'rgba(251,191,36,0.15)' : i === hlStep ? 'rgba(74,222,128,0.3)' : wrongs.has(i) ? 'rgba(248,113,113,0.3)' : i < moves.length ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)',
+                color: step.isSkip ? '#fbbf24' : i === hlStep ? '#4ade80' : wrongs.has(i) ? '#f87171' : i < moves.length ? '#94a3b8' : '#64748b',
+                border: `2px solid ${step.isSkip ? 'rgba(251,191,36,0.3)' : i === hlStep ? 'rgba(74,222,128,0.5)' : wrongs.has(i) ? 'rgba(248,113,113,0.5)' : 'rgba(255,255,255,0.1)'}`,
+              }}>{step.display}{step.isSkip ? '⏭' : ''}</span>
+            ))}
+          </div>
+          <div style={{ height: 6, width: 400, background: 'rgba(255,255,255,0.1)', borderRadius: 3, overflow: 'hidden', marginBottom: 16 }}>
+            <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg,#22d3ee,#3b82f6)', borderRadius: 3, transition: 'width 0.3s' }} />
+          </div>
+          <div style={{ fontSize: 20, color: '#94a3b8', fontFamily: '"SF Mono", Menlo, monospace' }}>{time.toFixed(1)}s · {moves.length}/{formula.formula.split(/\s+/).filter(Boolean).length} 步</div>
+          {recentMoves.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 16 }}>
+              {recentMoves.slice(0, 5).map((rm, i) => (
+                <span key={i} style={{
+                  fontFamily: '"SF Mono", Menlo, monospace', fontSize: 18, fontWeight: 600,
+                  padding: '6px 14px', borderRadius: 8,
+                  background: rm.type === 'matched' ? 'rgba(74,222,128,0.2)' : rm.type === 'wrong' ? 'rgba(248,113,113,0.2)' : 'rgba(34,211,238,0.15)',
+                  color: rm.type === 'matched' ? '#4ade80' : rm.type === 'wrong' ? '#f87171' : '#22d3ee',
+                }}>{rm.move}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Responsive CSS */}
       <style>{`
