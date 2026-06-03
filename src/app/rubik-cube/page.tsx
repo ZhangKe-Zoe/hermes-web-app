@@ -831,6 +831,12 @@ export default function RubikCubeTrainer() {
   const autoAdvanceRef = useRef(false);
   const cubeFaceletsRef = useRef<string[]|null>(null);
   const handleMoveRef = useRef<(move: string) => void>(() => {});
+  
+  // ── Drill mode (sequential formula practice) ──
+  const [drillMode, setDrillMode] = useState(false);
+  const [drillQueue, setDrillQueue] = useState<Formula[]>([]);
+  const [drillIndex, setDrillIndex] = useState(0);
+  const [drillStats, setDrillStats] = useState<{ total: number; correct: number; wrong: number; totalTime: number }>({ total: 0, correct: 0, wrong: 0, totalTime: 0 });
   const [showSettings, setShowSettings] = useState(false);
   const [showNotation, setShowNotation] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -967,6 +973,11 @@ export default function RubikCubeTrainer() {
           addLog("✅ 完成！" + t + "s", "success"); setPracticing(false);
           playSound('complete');
           if (timerRef.current) clearInterval(timerRef.current);
+          // Drill mode: advance to next formula
+          if (drillMode) {
+            setDrillStats(p => ({ ...p, total: p.total + 1, correct: p.correct + stats.correct, wrong: p.wrong + stats.wrong, totalTime: p.totalTime + parseFloat(t) }));
+            setTimeout(() => advanceDrill(), 1500);
+          }
           if (autoAdvanceRef.current && cubeFaceletsRef.current) {
             setTimeout(() => {
               const stage = analyzeSolveStage(cubeFaceletsRef.current!);
@@ -1124,6 +1135,41 @@ export default function RubikCubeTrainer() {
     setStats({ correct: 0, wrong: 0, streak: 0, bestStreak: 0 }); setTime(0);
     startRef.current = null; if (timerRef.current) clearInterval(timerRef.current);
   }, []);
+
+  // ── Drill mode functions ──
+  const startDrill = useCallback((count: number = 10) => {
+    const pool = formulas.length > 0 ? formulas : formulaLibrary[cat] || [];
+    if (pool.length === 0) return;
+    const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, count);
+    setDrillQueue(shuffled);
+    setDrillIndex(0);
+    setDrillMode(true);
+    setDrillStats({ total: 0, correct: 0, wrong: 0, totalTime: 0 });
+    setFormula(shuffled[0]);
+    setPracticing(true); setMoves([]); setWrongs(new Set()); setHlStep(0);
+    setStats({ correct: 0, wrong: 0, streak: 0, bestStreak: 0 }); setTime(0);
+    startRef.current = Date.now();
+    addLog(`🏋️ Drill开始: ${count}个公式`, 'success');
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => { if (startRef.current) setTime(parseFloat(((Date.now() - startRef.current) / 1000).toFixed(1))); }, 100);
+  }, [formulas, cat, addLog]);
+
+  const advanceDrill = useCallback(() => {
+    const nextIdx = drillIndex + 1;
+    if (nextIdx >= drillQueue.length) {
+      // Drill complete
+      setDrillMode(false);
+      addLog(`🏆 Drill完成! ${drillStats.total}个公式`, 'success');
+      playSound('complete');
+      return;
+    }
+    setDrillIndex(nextIdx);
+    setFormula(drillQueue[nextIdx]);
+    setPracticing(true); setMoves([]); setWrongs(new Set()); setHlStep(0);
+    setStats({ correct: 0, wrong: 0, streak: 0, bestStreak: 0 }); setTime(0);
+    startRef.current = Date.now();
+    addLog(`➡️ 下一个: ${drillQueue[nextIdx].id}`, 'info');
+  }, [drillIndex, drillQueue, drillStats, addLog, playSound]);
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); if (timerIntervalRef.current) clearInterval(timerIntervalRef.current); }, []);
 
@@ -1414,6 +1460,20 @@ export default function RubikCubeTrainer() {
             <div style={{ padding: '8px 12px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
               <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="🔍 搜索公式" style={{ width: '100%', padding: '6px 10px', fontSize: 12, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.9)', color: '#1e293b', outline: 'none', boxSizing: 'border-box' }} />
             </div>
+            {/* Drill mode buttons */}
+            <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+              <button onClick={() => startDrill(5)} style={{ flex: 1, padding: '6px 8px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', background: 'rgba(168,85,247,0.15)', color: '#a855f7' }}>🏋️ ×5</button>
+              <button onClick={() => startDrill(10)} style={{ flex: 1, padding: '6px 8px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', background: 'rgba(168,85,247,0.15)', color: '#a855f7' }}>🏋️ ×10</button>
+              <button onClick={() => startDrill(20)} style={{ flex: 1, padding: '6px 8px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', background: 'rgba(168,85,247,0.15)', color: '#a855f7' }}>🏋️ ×20</button>
+            </div>
+            {drillMode && (
+              <div style={{ padding: '8px 12px', borderBottom: '1px solid rgba(0,0,0,0.08)', background: 'rgba(168,85,247,0.05)' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#a855f7', marginBottom: 4 }}>🏋️ Drill: {drillIndex + 1}/{drillQueue.length}</div>
+                <div style={{ height: 3, background: 'rgba(0,0,0,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${((drillIndex + 1) / drillQueue.length) * 100}%`, background: '#a855f7', borderRadius: 2, transition: 'width 0.3s' }} />
+                </div>
+              </div>
+            )}
             <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px' }}>
               {formulas.map(f => {
                 const dm = diffMeta(f.difficulty);
