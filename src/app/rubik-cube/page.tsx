@@ -628,6 +628,7 @@ export default function RubikCubeTrainer() {
   const [cubeStage, setCubeStage] = useState("");
   const autoAdvanceRef = useRef(false);
   const cubeFaceletsRef = useRef<string[]|null>(null);
+  const handleMoveRef = useRef<(move: string) => void>(() => {});
   const [showSettings, setShowSettings] = useState(false);
   const [macInput, setMacInput] = useState(() => {
     if (typeof window !== "undefined") return localStorage.getItem("cube_mac") || "CC:A3:00:00:CC:3E";
@@ -707,6 +708,9 @@ export default function RubikCubeTrainer() {
     setRecentMoves(p => [{ move, type: moveType }, ...p].slice(0, 10));
   }, [formula, practicing, moves, addLog]);
 
+  // Keep ref in sync with latest handleMove
+  useEffect(() => { handleMoveRef.current = handleMove; });
+
   // ── BLE Connect ──
   const connect = useCallback(async () => {
     if (connLock.current) return;
@@ -763,7 +767,7 @@ export default function RubikCubeTrainer() {
           // State Change
           const moveByte = msg[34];
           const move = MOVE_TABLE[moveByte];
-          if (move) handleMove(move);
+          if (move) handleMoveRef.current(move);
           const batt = msg[35];
           if (batt !== undefined) setBattery(batt);
           const stateBytes = Array.from(msg.slice(7, 34));
@@ -801,7 +805,7 @@ export default function RubikCubeTrainer() {
     } finally {
       connLock.current = false; setConnecting(false);
     }
-  }, [addLog, handleMove, macInput]);
+  }, [addLog, macInput]);
 
   const selectFormula = useCallback((id: string) => {
     const f = formulas.find(x => x.id === id);
