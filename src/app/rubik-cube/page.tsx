@@ -6,6 +6,7 @@ import aesjs from 'aes-js';
 // ── Types ──
 interface Formula { id: string; name: string; formula: string; description: string; difficulty?: 'beginner' | 'intermediate' | 'advanced'; }
 interface Stats { correct: number; wrong: number; streak: number; bestStreak: number; }
+interface PracticeSession { id: number; formula: string; time: number; moves: number; correct: number; date: string; }
 interface LogEntry { id: number; time: string; message: string; type: 'info' | 'success' | 'error' | 'warning'; }
 interface RecentMove { move: string; type: 'matched' | 'valid' | 'wrong'; }
 
@@ -778,6 +779,13 @@ export default function RubikCubeTrainer() {
   const [showLog, setShowLog] = useState(false);
   const [recentMoves, setRecentMoves] = useState<RecentMove[]>([]);
   const [scramble, setScramble] = useState("");
+  const [history, setHistory] = useState<PracticeSession[]>(() => {
+    if (typeof window !== "undefined") {
+      try { return JSON.parse(localStorage.getItem("practice_history") || "[]"); } catch { return []; }
+    }
+    return [];
+  });
+  const [showHistory, setShowHistory] = useState(false);
   const [cubeStage, setCubeStage] = useState("");
   const autoAdvanceRef = useRef(false);
   const cubeFaceletsRef = useRef<string[]|null>(null);
@@ -1205,6 +1213,35 @@ export default function RubikCubeTrainer() {
             <SmartGuidance facelets={cubeFacelets} onAutoStart={handleAutoStart} />
 
             {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} />}
+            {/* History Toggle */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setShowHistory(p => !p)} style={{ flex: 1, padding: '8px 16px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showHistory ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.9)', color: showHistory ? '#0891b2' : '#475569', cursor: 'pointer' }}>{'\U0001F4CA'} {'\u5386\u53f2\u8bb0\u5f55'}</button>
+            </div>
+
+            {showHistory && (
+              <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16, maxHeight: 300, overflow: 'auto' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>{'\U0001F4CA'} {'\u7ec3\u4e60\u8bb0\u5f55'}</div>
+                {history.length === 0 ? (
+                  <div style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center', padding: 20 }}>{'\u6682\u65e0\u8bb0\u5f55'}</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {history.slice(0, 20).map((s) => (
+                      <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(0,0,0,0.03)', borderRadius: 8, fontSize: 12 }}>
+                        <div>
+                          <div style={{ fontWeight: 600, color: '#1e293b' }}>{s.formula}</div>
+                          <div style={{ fontSize: 10, color: '#94a3b8' }}>{s.date}</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontWeight: 700, color: '#0891b2' }}>{s.time}s</div>
+                          <div style={{ fontSize: 10, color: '#94a3b8' }}>{s.correct}/{s.moves} {'\u6b65'}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
 
           {/* Right - Stats + Log */}
