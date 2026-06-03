@@ -1561,6 +1561,56 @@ export default function RubikCubeTrainer() {
             {/* Smart Guidance - Desktop */}
             <SmartGuidance facelets={cubeFacelets} onAutoStart={handleAutoStart} />
 
+            {/* Personalized Recommendations */}
+            {history.length > 0 && (
+              <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>🎯 推荐练习</span>
+                  <span style={{ fontSize: 11, color: '#64748b' }}>基于练习记录</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {(() => {
+                    // Analyze history to find weak formulas
+                    const formulaStats: Record<string, { correct: number; wrong: number; totalTime: number; count: number }> = {};
+                    for (const s of history) {
+                      if (!formulaStats[s.formula]) formulaStats[s.formula] = { correct: 0, wrong: 0, totalTime: 0, count: 0 };
+                      formulaStats[s.formula].correct += s.correct;
+                      formulaStats[s.formula].wrong += s.moves - s.correct;
+                      formulaStats[s.formula].totalTime += s.time;
+                      formulaStats[s.formula].count++;
+                    }
+                    // Find formulas with low accuracy or high time
+                    const weakFormulas = Object.entries(formulaStats)
+                      .map(([id, stats]) => ({
+                        id,
+                        accuracy: stats.correct / (stats.correct + stats.wrong) * 100 || 0,
+                        avgTime: stats.totalTime / stats.count,
+                        count: stats.count,
+                      }))
+                      .filter(f => f.count >= 2) // Need at least 2 attempts
+                      .sort((a, b) => a.accuracy - b.accuracy) // Worst accuracy first
+                      .slice(0, 3);
+                    if (weakFormulas.length === 0) return <div style={{ fontSize: 12, color: '#64748b', textAlign: 'center', padding: 8 }}>继续练习以获取推荐</div>;
+                    return weakFormulas.map(f => {
+                      const formulaObj = Object.values(formulaLibrary).flat().find(f2 => f2.id === f.id);
+                      return (
+                        <div key={f.id} onClick={() => formulaObj && selectFormula(f.id)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 8, cursor: 'pointer', background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.06)', transition: 'all 0.15s' }}>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>{f.id}</div>
+                            <div style={{ fontSize: 11, color: '#64748b' }}>{formulaObj?.name || f.id}</div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: f.accuracy < 70 ? '#f87171' : f.accuracy < 90 ? '#fbbf24' : '#4ade80' }}>{f.accuracy.toFixed(0)}%</div>
+                            <div style={{ fontSize: 10, color: '#94a3b8' }}>{f.avgTime.toFixed(1)}s · {f.count}次</div>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            )}
+
             {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} />}
             {/* History Toggle */}
             <div style={{ display: 'flex', gap: 8 }}>
