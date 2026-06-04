@@ -407,6 +407,144 @@ function colorName(hex: string): string {
   return map[hex] || '?';
 }
 
+// ── OLL Case Recognition ──
+// Recognize specific OLL case from U face pattern
+function recognizeOLLCase(U: string[], uColor: string): { caseId: string; name: string; formula: string } | null {
+  // Count oriented pieces
+  const uEdges = [1, 3, 5, 7]; // edge indices
+  const uCorners = [0, 2, 6, 8]; // corner indices
+  const edgeUp = uEdges.filter(i => U[i] === uColor);
+  const cornerUp = uCorners.filter(i => U[i] === uColor);
+  
+  // Dot cases (0 edges up)
+  if (edgeUp.length === 0 && cornerUp.length === 0) {
+    return { caseId: 'OLL-1', name: '全点状', formula: "R U2 R2 F R F' U2 R' F R F'" };
+  }
+  if (edgeUp.length === 0 && cornerUp.length === 2) {
+    // Check if adjacent or diagonal
+    const sorted = cornerUp.sort();
+    if ((sorted[0] === 0 && sorted[1] === 2) || (sorted[0] === 6 && sorted[1] === 8)) {
+      return { caseId: 'OLL-2', name: '点+邻角', formula: "F R U R' U' F' f R U R' U' f'" };
+    }
+    return { caseId: 'OLL-3', name: '点+对角', formula: "f R U R' U' f' U' F R U R' U' F'" };
+  }
+  
+  // L-shape cases (2 adjacent edges up)
+  if (edgeUp.length === 2) {
+    const sorted = edgeUp.sort();
+    const isLine = (sorted[0] === 1 && sorted[1] === 7) || (sorted[0] === 3 && sorted[1] === 5);
+    if (isLine) {
+      // Line cases
+      if (cornerUp.length === 0) return { caseId: 'OLL-45', name: '横线', formula: "F R U R' U' F'" };
+      if (cornerUp.length === 2) return { caseId: 'OLL-51', name: '线+角', formula: "F U R U' R' U R U' R' F'" };
+      return { caseId: 'OLL-44', name: '线+双角', formula: "F U R U' R' F'" };
+    } else {
+      // L-shape cases
+      if (cornerUp.length === 0) return { caseId: 'OLL-48', name: 'L形', formula: "F R U R' U' F'" };
+      if (cornerUp.length === 1) return { caseId: 'OLL-53', name: 'L+单角', formula: "r' U' R U' R' U R U' R' U2 r" };
+      if (cornerUp.length === 2) return { caseId: 'OLL-49', name: 'L+双角', formula: "R B' R2 F R2 B R2 F' R" };
+      return { caseId: 'OLL-47', name: 'L+三角', formula: "R' U' R' F R F' R' F R F' U R" };
+    }
+  }
+  
+  // Cross cases (4 edges up)
+  if (edgeUp.length === 4) {
+    if (cornerUp.length === 0) return { caseId: 'OLL-21', name: '十字无角', formula: "R U2 R' U' R U R' U' R U' R'" };
+    if (cornerUp.length === 1) {
+      const c = cornerUp[0];
+      if (c === 0 || c === 8) return { caseId: 'OLL-27', name: '正鱼形', formula: "R U R' U R U2 R'" };
+      return { caseId: 'OLL-26', name: '反鱼形', formula: "R U2 R' U' R U' R'" };
+    }
+    if (cornerUp.length === 2) {
+      const sorted = cornerUp.sort();
+      if (sorted[0] === 0 && sorted[1] === 8) return { caseId: 'OLL-22', name: 'Pi形', formula: "R U2 R2 U' R2 U' R2 U2 R" };
+      if (sorted[0] === 2 && sorted[1] === 6) return { caseId: 'OLL-23', name: '车灯形', formula: "R2 D R' U2 R D' R' U2 R'" };
+      return { caseId: 'OLL-24', name: '变色龙', formula: "r U R' U' r' F R F'" };
+    }
+    if (cornerUp.length === 3) return { caseId: 'OLL-25', name: '蝴蝶结', formula: "F' r U R' U' r' F R" };
+    return { caseId: 'OLL-21', name: '十字', formula: "R U2 R' U' R U R' U' R U' R'" };
+  }
+  
+  // 2 edges up, not adjacent (shouldn't happen on 3x3 but handle gracefully)
+  return { caseId: 'OLL-45', name: 'OLL基础', formula: "F R U R' U' F'" };
+}
+
+// ── PLL Case Recognition ──
+function recognizePLLCase(facelets: string[]): { caseId: string; name: string; formula: string } | null {
+  const U = facelets.slice(0, 9);
+  const R = facelets.slice(9, 18);
+  const F = facelets.slice(18, 27);
+  const L = facelets.slice(36, 45);
+  const B = facelets.slice(45, 54);
+  
+  // Check edge positions (adjacent to U face)
+  const edgeCorrect = [
+    F[1] === F[4], // front
+    R[1] === R[4], // right  
+    B[1] === B[4], // back
+    L[1] === L[4], // left
+  ];
+  const correctEdges = edgeCorrect.filter(Boolean).length;
+  
+  // Check corner positions
+  const cornerCorrect = [
+    F[2] === F[4] && R[0] === R[4], // UFR
+    F[0] === F[4] && L[2] === L[4], // UFL
+    B[2] === B[4] && R[2] === R[4], // UBR
+    B[0] === B[4] && L[0] === L[4], // UBL
+  ];
+  const correctCorners = cornerCorrect.filter(Boolean).length;
+  
+  // All correct = skip
+  if (correctEdges === 4 && correctCorners === 4) return null;
+  
+  // Diagonal corner swaps (no edges correct)
+  if (correctEdges === 0 && correctCorners === 0) {
+    return { caseId: 'PLL-Y', name: 'Y排列', formula: "F R U' R' U' R U R' F' R U R' U' R' F R F'" };
+  }
+  if (correctEdges === 0 && correctCorners === 2) {
+    // Check if adjacent or opposite corners
+    const correctCornerIdx = cornerCorrect.map((c, i) => c ? i : -1).filter(i => i >= 0);
+    if (correctCornerIdx.length === 2) {
+      const [a, b] = correctCornerIdx;
+      if ((a === 0 && b === 3) || (a === 1 && b === 2)) {
+        return { caseId: 'PLL-Na', name: 'N排列', formula: "R U R' U R U R' F' R U R' U' R' F R2 U' R' U2 R U' R'" };
+      }
+    }
+    return { caseId: 'PLL-V', name: 'V排列', formula: "R' U R' U' y R' F' R2 U' R' U R' F R F" };
+  }
+  
+  // Adjacent corner swaps (2 edges correct)
+  if (correctEdges === 2 && correctCorners === 2) {
+    const correctEdgeIdx = edgeCorrect.map((c, i) => c ? i : -1).filter(i => i >= 0);
+    const correctCornerIdx = cornerCorrect.map((c, i) => c ? i : -1).filter(i => i >= 0);
+    if (correctEdgeIdx.length === 2 && correctCornerIdx.length === 2) {
+      return { caseId: 'PLL-T', name: 'T排列', formula: "R U R' U' R' F R2 U' R' U' R U R' F'" };
+    }
+  }
+  
+  // Edge-only swaps
+  if (correctEdges === 0 && correctCorners === 4) {
+    return { caseId: 'PLL-H', name: 'H排列', formula: "M2 U M2 U2 M2 U M2" };
+  }
+  if (correctEdges === 1 && correctCorners === 4) {
+    return { caseId: 'PLL-Ua', name: 'Ua排列', formula: "R U R' U R' U' R2 U' R' U R' U R" };
+  }
+  if (correctEdges === 2 && correctCorners === 4) {
+    const correctEdgeIdx = edgeCorrect.map((c, i) => c ? i : -1).filter(i => i >= 0);
+    if (correctEdgeIdx.length === 2) {
+      const [a, b] = correctEdgeIdx;
+      if ((a === 0 && b === 2) || (a === 1 && b === 3)) {
+        return { caseId: 'PLL-Z', name: 'Z排列', formula: "M' U M2 U M2 U M' U2 M2" };
+      }
+    }
+    return { caseId: 'PLL-Ua', name: 'Ua排列', formula: "R U R' U R' U' R2 U' R' U R' U R" };
+  }
+  
+  // Default
+  return { caseId: 'PLL-T', name: 'T排列', formula: "R U R' U' R' F R2 U' R' U' R U R' F'" };
+}
+
 // ── Smart Solve Stage Analyzer ──
 // Face order: U(0-8), R(9-17), F(18-26), D(27-35), L(36-44), B(45-53)
 // Face layout: 0 1 2 / 3 4 5 / 6 7 8
@@ -475,16 +613,23 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
   const ollComplete = isFaceSolid(U);
 
   if (!ollComplete) {
-    // Count facelets on U that match uColor
+    // Use enhanced OLL case recognition
+    const ollCase = recognizeOLLCase(U, uColor);
+    if (ollCase) {
+      return {
+        stage: 'OLL', stageIcon: '🟡',
+        description: `${ollCase.caseId} ${ollCase.name}`,
+        suggestedFormula: ollCase.formula, formulaName: ollCase.caseId,
+        explanation: `识别为${ollCase.caseId}案例，使用对应公式`
+      };
+    }
+    
+    // Fallback to basic detection
     const uMatch = U.filter(c => c === uColor).length;
-
-    // Edges of U: indices 1, 3, 5, 7
     const uEdgesMatch = [1, 3, 5, 7].filter(i => U[i] === uColor);
-    // Corners of U: indices 0, 2, 6, 8
     const uCornersMatch = [0, 2, 6, 8].filter(i => U[i] === uColor);
 
     if (uMatch <= 1) {
-      // Dot case (only center or center + 0 edges)
       return {
         stage: 'OLL', stageIcon: '🟡',
         description: '顶面点状 (dot)',
@@ -494,7 +639,6 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
     }
 
     if (uEdgesMatch.length === 2 && uCornersMatch.length === 0) {
-      // Check if L-shape or line
       const edgePair = uEdgesMatch.join(',');
       const isLine = (edgePair === '1,7') || (edgePair === '3,5');
       if (isLine) {
@@ -515,7 +659,6 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
     }
 
     if (uEdgesMatch.length === 4 && uCornersMatch.length === 0) {
-      // Cross formed, no corners
       return {
         stage: 'OLL', stageIcon: '🟡',
         description: '顶面十字 (cross)',
@@ -525,15 +668,9 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
     }
 
     if (uEdgesMatch.length === 4 && uCornersMatch.length >= 1) {
-      // Cross + some corners → fish or partial
-      // Check for fish pattern: exactly 1 corner matching, positioned diagonally
       if (uCornersMatch.length === 1) {
         const c = uCornersMatch[0];
-        // Fish: the matching corner and the U[4] form a pattern
-        // Determine which fish by checking orientation
-        const fishCorner = c;
-        // For simplicity, check if it's the "right" fish or "left" fish
-        if (fishCorner === 0 || fishCorner === 8) {
+        if (c === 0 || c === 8) {
           return {
             stage: 'OLL', stageIcon: '🟡',
             description: '顶面正鱼形',
@@ -545,7 +682,7 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
             stage: 'OLL', stageIcon: '🟡',
             description: '顶面反鱼形',
             suggestedFormula: "R U2 R' U' R U' R'", formulaName: 'OLL 反鱼形',
-            explanation: '顶层反鱼形，用R U2 R\' U\' R U\' R\'将黄色面补全'
+            explanation: "顶层反鱼形，用R U2 R' U' R U' R'将黄色面补全"
           };
         }
       }
@@ -557,7 +694,6 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
           explanation: '十字完成但角块未全黄，使用OLL-21翻转'
         };
       }
-      // 3 corners matching → almost done
       return {
         stage: 'OLL', stageIcon: '🟡',
         description: '顶面即将完成',
@@ -566,7 +702,6 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
       };
     }
 
-    // Fallback: some edges match but pattern not recognized
     if (uEdgesMatch.length >= 2) {
       return {
         stage: 'OLL', stageIcon: '🟡',
@@ -585,35 +720,35 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
   }
 
   // ── Check PLL ──
-  // U face is all uColor, check if side faces are solved
   if ([U, R, F, D, L, B].every(isFaceSolid)) {
     return { stage: '已还原', stageIcon: '🎉', description: '魔方已完全还原！', suggestedFormula: '', formulaName: '', explanation: '恭喜！所有面已还原完成' };
   }
 
-  // PLL: U face all same color, check edge and corner positions
-  // U edge adjacencies:
-  // U[7]-F[1]: front edge → F[1] should equal F[4]
-  // U[5]-R[1]: right edge → R[1] should equal R[4]
-  // U[1]-B[1]: back edge → B[1] should equal B[4]
-  // U[3]-L[1]: left edge → L[1] should equal L[4]
+  // Use enhanced PLL case recognition
+  const pllCase = recognizePLLCase(facelets);
+  if (pllCase) {
+    return {
+      stage: 'PLL', stageIcon: '🔄',
+      description: `${pllCase.caseId} ${pllCase.name}`,
+      suggestedFormula: pllCase.formula, formulaName: pllCase.caseId,
+      explanation: `识别为${pllCase.caseId}案例，使用对应公式`
+    };
+  }
+
+  // Fallback to basic PLL detection
   const edgeCorrect = [
-    F[1] === F[4], // front
-    R[1] === R[4], // right
-    B[1] === B[4], // back
-    L[1] === L[4], // left
+    F[1] === F[4],
+    R[1] === R[4],
+    B[1] === B[4],
+    L[1] === L[4],
   ];
   const correctEdgeCount = edgeCorrect.filter(Boolean).length;
 
-  // U corner adjacencies (simplified check):
-  // UFR: U[8]-F[2]-R[0] → F[2]===F[4] && R[0]===R[4]
-  // UFL: U[6]-F[0]-L[2] → F[0]===F[4] && L[2]===L[4]
-  // UBR: U[2]-B[2]-R[2] → B[2]===B[4] && R[2]===R[4]
-  // UBL: U[0]-B[0]-L[0] → B[0]===B[4] && L[0]===L[4]
   const cornerCorrect = [
-    F[2] === F[4] && R[0] === R[4], // UFR
-    F[0] === F[4] && L[2] === L[4], // UFL
-    B[2] === B[4] && R[2] === R[4], // UBR
-    B[0] === B[4] && L[0] === L[4], // UBL
+    F[2] === F[4] && R[0] === R[4],
+    F[0] === F[4] && L[2] === L[4],
+    B[2] === B[4] && R[2] === R[4],
+    B[0] === B[4] && L[0] === L[4],
   ];
   const correctCornerCount = cornerCorrect.filter(Boolean).length;
 
@@ -636,7 +771,6 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
   }
 
   if (correctEdgeCount === 1 && correctCornerCount === 4) {
-    // One edge correct, three need cycling → Ua or Ub
     return {
       stage: 'PLL', stageIcon: '🔄',
       description: '三棱换 (Ua/Ub)',
@@ -654,7 +788,6 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
     };
   }
 
-  // Generic PLL
   return {
     stage: 'PLL', stageIcon: '🔄',
     description: `顶层排列 (${correctEdgeCount}棱✓ ${correctCornerCount}角✓)`,
