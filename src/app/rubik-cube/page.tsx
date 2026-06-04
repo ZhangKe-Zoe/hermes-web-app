@@ -885,6 +885,64 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
   );
 }
 
+// ── Solve Tracking Panel ──
+function SolveTrackingPanel({ tracking, onStart, onStop }: {
+  tracking: { active: boolean; startTime: number; phases: { stage: string; time: number; moves: number }[]; currentStage: string; stageStartTime: number; stageMoves: number };
+  onStart: () => void; onStop: () => void;
+}) {
+  const stageColors: Record<string, string> = {
+    '底层十字': '#22d3ee', 'F2L': '#3b82f6', 'OLL': '#facc15', 'PLL': '#a855f7', '已还原': '#4ade80',
+  };
+  const totalTime = tracking.phases.reduce((sum, p) => sum + p.time, 0);
+  const currentElapsed = tracking.active ? Date.now() - tracking.stageStartTime : 0;
+
+  return (
+    <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span>⏱️ 还原追踪</span>
+          {tracking.active && <span style={{ fontSize: 11, color: '#4ade80', animation: 'pulse 1s infinite' }}>● 追踪中</span>}
+        </div>
+        <button onClick={tracking.active ? onStop : onStart} style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: tracking.active ? 'rgba(248,113,113,0.15)' : '#06b6d4', color: tracking.active ? '#f87171' : '#fff' }}>
+          {tracking.active ? '⏹ 停止' : '▶ 开始'}
+        </button>
+      </div>
+      {tracking.phases.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {tracking.phases.filter(p => p.stage).map((phase, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 8, background: 'rgba(0,0,0,0.03)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: stageColors[phase.stage] || '#94a3b8' }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#1e293b' }}>{phase.stage}</span>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, fontFamily: '"SF Mono", Menlo, monospace', color: '#1e293b' }}>{(phase.time / 1000).toFixed(1)}s</span>
+                <span style={{ fontSize: 10, color: '#94a3b8', marginLeft: 6 }}>{phase.moves}步</span>
+              </div>
+            </div>
+          ))}
+          {tracking.active && tracking.currentStage && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 8, background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: stageColors[tracking.currentStage] || '#94a3b8', animation: 'pulse 1s infinite' }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#0891b2' }}>{tracking.currentStage}</span>
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: '"SF Mono", Menlo, monospace', color: '#0891b2' }}>{(currentElapsed / 1000).toFixed(1)}s</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: 8, background: 'rgba(0,0,0,0.05)', marginTop: 4 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#1e293b' }}>总计</span>
+            <span style={{ fontSize: 15, fontWeight: 700, fontFamily: '"SF Mono", Menlo, monospace', color: '#1e293b' }}>{((totalTime + currentElapsed) / 1000).toFixed(1)}s</span>
+          </div>
+        </div>
+      )}
+      {tracking.phases.length === 0 && !tracking.active && (
+        <div style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center', padding: 12 }}>点击「开始」追踪还原过程</div>
+      )}
+    </div>
+  );
+}
+
 // ── Smart Guidance Panel ──
 function SmartGuidance({ facelets, onAutoStart }: { facelets: string[] | null; onAutoStart?: (formulaStr: string, formulaName: string) => void }) {
   if (!facelets || facelets.length < 54) return null;
@@ -981,6 +1039,16 @@ export default function RubikCubeTrainer() {
     return [];
   });
   const [cubeStage, setCubeStage] = useState("");
+  
+  // ── Solve tracking ──
+  const [solveTracking, setSolveTracking] = useState<{
+    active: boolean;
+    startTime: number;
+    phases: { stage: string; time: number; moves: number }[];
+    currentStage: string;
+    stageStartTime: number;
+    stageMoves: number;
+  }>({ active: false, startTime: 0, phases: [], currentStage: '', stageStartTime: 0, stageMoves: 0 });
   const autoAdvanceRef = useRef(false);
   const cubeFaceletsRef = useRef<string[]|null>(null);
   const handleMoveRef = useRef<(move: string) => void>(() => {});
@@ -1242,6 +1310,25 @@ export default function RubikCubeTrainer() {
           if (batt !== undefined) setBattery(batt);
           const stateBytes = Array.from(msg.slice(7, 34));
           const pf = parseCubeState(stateBytes); setCubeFacelets(pf); cubeFaceletsRef.current = pf; const sr = analyzeSolveStage(pf); setCubeStage(sr.stage + " " + sr.stageIcon);
+          
+          // Solve tracking - detect stage transitions
+          setSolveTracking(prev => {
+            if (!prev.active) return prev;
+            const now = Date.now();
+            if (sr.stage !== prev.currentStage) {
+              const elapsed = now - prev.stageStartTime;
+              const newPhase = { stage: prev.currentStage, time: elapsed, moves: prev.stageMoves };
+              return {
+                ...prev,
+                phases: [...prev.phases, newPhase],
+                currentStage: sr.stage,
+                stageStartTime: now,
+                stageMoves: 0,
+              };
+            }
+            return { ...prev, stageMoves: prev.stageMoves + 1 };
+          });
+          
           if (msg.length >= 92 && msg[91] === 1) {
             const ack = buildAck(msg);
             charRef.current?.writeValueWithoutResponse(ack).catch(() => {});
@@ -1326,6 +1413,30 @@ export default function RubikCubeTrainer() {
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => { if (startRef.current) setTime(parseFloat(((Date.now() - startRef.current) / 1000).toFixed(1))); }, 100);
   }, [formulas, cat, addLog]);
+
+  const startSolveTracking = useCallback(() => {
+    setSolveTracking({
+      active: true,
+      startTime: Date.now(),
+      phases: [],
+      currentStage: cubeStage.split(' ')[0] || '未知',
+      stageStartTime: Date.now(),
+      stageMoves: 0,
+    });
+    addLog('⏱️ 还原追踪开始', 'success');
+  }, [cubeStage, addLog]);
+
+  const stopSolveTracking = useCallback(() => {
+    setSolveTracking(prev => {
+      if (!prev.active) return prev;
+      const elapsed = Date.now() - prev.stageStartTime;
+      const finalPhase = { stage: prev.currentStage, time: elapsed, moves: prev.stageMoves };
+      const allPhases = [...prev.phases, finalPhase];
+      const totalTime = allPhases.reduce((sum, p) => sum + p.time, 0);
+      addLog(`⏱️ 还原完成: ${(totalTime / 1000).toFixed(1)}s`, 'success');
+      return { ...prev, active: false, phases: allPhases };
+    });
+  }, [addLog]);
 
   const resumePractice = useCallback(() => {
     setPaused(false);
@@ -1754,6 +1865,9 @@ export default function RubikCubeTrainer() {
             {/* Smart Guidance - Desktop */}
             <SmartGuidance facelets={cubeFacelets} onAutoStart={handleAutoStart} />
 
+            {/* Solve Tracking */}
+            <SolveTrackingPanel tracking={solveTracking} onStart={startSolveTracking} onStop={stopSolveTracking} />
+
             {/* Personalized Recommendations */}
             {history.length > 0 && (
               <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16 }}>
@@ -1814,7 +1928,7 @@ export default function RubikCubeTrainer() {
               <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16, maxHeight: 300, overflow: 'auto' }}>
                 <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>{'\U0001F4CA'} {'\u7ec3\u4e60\u8bb0\u5f55'}</div>
                 {history.length === 0 ? (
-                  <div style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center', padding: 20 }}>{'\u6682\u65e0\u8bb0\u5f55'}</div>
+                  <div style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center', padding: 20 }}>暂无记录</div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {history.slice(0, 20).map((s) => (
