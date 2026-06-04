@@ -14,7 +14,8 @@
     "aes-js": "^3.1.2",
     "next": "^15.0.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "rubiks-cube": "^3.0.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
