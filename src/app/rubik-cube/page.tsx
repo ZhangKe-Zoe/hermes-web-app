@@ -416,7 +416,7 @@ const formulaLibrary: Record<string, Formula[]> = {
 // L face (orange on left): facelets[36..44]
 // B face (blue on back): facelets[45..53]
 
-const Cube3D = React.memo(function Cube3D({ rx, ry, facelets, size = 180 }: { rx: number; ry: number; facelets?: string[]; size?: number }) {
+const Cube3D = React.memo(function Cube3D({ rx, ry, facelets, size = 180, rotatingFace, rotationAngle }: { rx: number; ry: number; facelets?: string[]; size?: number; rotatingFace?: string | null; rotationAngle?: number }) {
   const defaultF = useMemo(() => {
     const f: string[] = [];
     for (let i = 0; i < 9; i++) f.push('#FFFFFF'); // U
@@ -433,6 +433,34 @@ const Cube3D = React.memo(function Cube3D({ rx, ry, facelets, size = 180 }: { rx
   // faceOffset: U=0, R=9, F=18, D=27, L=36, B=45
   const getColor = (faceOffset: number, row: number, col: number) => {
     return f[faceOffset + row * 3 + col] || '#333';
+  };
+
+  // 判断 cubie 是否属于正在旋转的面
+  const isRotatingFace = (x: number, y: number, z: number) => {
+    if (!rotatingFace) return false;
+    switch (rotatingFace) {
+      case 'U': return y === 1;
+      case 'D': return y === -1;
+      case 'F': return z === 1;
+      case 'B': return z === -1;
+      case 'R': return x === 1;
+      case 'L': return x === -1;
+      default: return false;
+    }
+  };
+
+  // 获取旋转面的旋转轴和角度
+  const getFaceRotation = (face: string) => {
+    const angle = rotationAngle || 0;
+    switch (face) {
+      case 'U': return { axis: 'Y', angle };
+      case 'D': return { axis: 'Y', angle: -angle };
+      case 'F': return { axis: 'Z', angle };
+      case 'B': return { axis: 'Z', angle: -angle };
+      case 'R': return { axis: 'X', angle };
+      case 'L': return { axis: 'X', angle: -angle };
+      default: return { axis: 'Y', angle: 0 };
+    }
   };
 
   const cubieSize = size / 3.5;
@@ -470,12 +498,20 @@ const Cube3D = React.memo(function Cube3D({ rx, ry, facelets, size = 180 }: { rx
           const tx = x * (cubieSize + gap) + cubeSize / 2 - cubieSize / 2;
           const ty = -y * (cubieSize + gap) + cubeSize / 2 - cubieSize / 2;
           const tz = z * (cubieSize + gap);
+          
+          // 如果 cubie 属于旋转面，应用额外的旋转
+          const isRotating = isRotatingFace(x, y, z);
+          const faceRotation = isRotating ? getFaceRotation(rotatingFace!) : null;
+          const rotationTransform = faceRotation 
+            ? ` rotate${faceRotation.axis}(${faceRotation.angle}deg)`
+            : '';
 
           return (
             <div key={idx} style={{
               position: 'absolute', width: cubieSize, height: cubieSize,
               transformStyle: 'preserve-3d',
-              transform: `translate3d(${tx}px, ${ty}px, ${tz}px)`
+              transform: `translate3d(${tx}px, ${ty}px, ${tz}px)${rotationTransform}`,
+              transition: isRotating ? 'transform 0.05s linear' : 'none'
             }}>
               {([
                 ['top', `rotateX(90deg) translateZ(${cubieSize / 2}px)`],
@@ -1178,6 +1214,8 @@ export default function RubikCubeTrainer() {
   const [learnStep, setLearnStep] = useState(0);
   const [learnPlaying, setLearnPlaying] = useState(false);
   const [learnFacelets, setLearnFacelets] = useState<string[] | null>(null);
+  const [learnRotatingFace, setLearnRotatingFace] = useState<string | null>(null);
+  const [learnRotationAngle, setLearnRotationAngle] = useState(0);
   const learnTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [timerMode, setTimerMode] = useState(false);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -1610,6 +1648,8 @@ export default function RubikCubeTrainer() {
     setLearnStep(0);
     setLearnPlaying(false);
     setLearnFacelets(null);
+    setLearnRotatingFace(null);
+    setLearnRotationAngle(0);
     if (learnTimerRef.current) clearInterval(learnTimerRef.current);
   }, []);
 
@@ -1625,19 +1665,53 @@ export default function RubikCubeTrainer() {
         setLearnFacelets(solvedFacelets);
       }
       setLearnPlaying(true);
+      let animationFrame: number | null = null;
+      let startTime = Date.now();
+      const ANIMATION_DURATION = 800; // 800ms per step
+      
       learnTimerRef.current = setInterval(() => {
         setLearnStep(prev => {
           const nextStep = prev + 1;
           if (nextStep >= steps.length) {
             setLearnPlaying(false);
+            setLearnRotatingFace(null);
+            setLearnRotationAngle(0);
             if (learnTimerRef.current) clearInterval(learnTimerRef.current);
+            if (animationFrame) cancelAnimationFrame(animationFrame);
             return prev;
           }
-          const stepsToApply = steps.slice(0, nextStep + 1);
-          const formulaToApply = stepsToApply.join(' ');
-          const currentFacelets = getSolvedFacelets();
-          const newFacelets = applyFormulaToFacelets(currentFacelets, formulaToApply);
-          setLearnFacelets(newFacelets);
+          
+          // 获取当前步骤的移动
+          const currentMove = steps[nextStep];
+          const face = currentMove[0];
+          const isPrime = currentMove.includes("'");
+          const targetAngle = isPrime ? -90 : 90;
+          
+          // 开始旋转动画
+          setLearnRotatingFace(face);
+          startTime = Date.now();
+          
+          const animate = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / ANIMATION_DURATION, 1);
+            const currentAngle = targetAngle * progress;
+            setLearnRotationAngle(currentAngle);
+            
+            if (progress < 1) {
+              animationFrame = requestAnimationFrame(animate);
+            } else {
+              // 动画完成，更新魔方状态
+              setLearnRotatingFace(null);
+              setLearnRotationAngle(0);
+              const stepsToApply = steps.slice(0, nextStep + 1);
+              const formulaToApply = stepsToApply.join(' ');
+              const currentFacelets = getSolvedFacelets();
+              const newFacelets = applyFormulaToFacelets(currentFacelets, formulaToApply);
+              setLearnFacelets(newFacelets);
+            }
+          };
+          animationFrame = requestAnimationFrame(animate);
+          
           return nextStep;
         });
       }, 1000);
@@ -1813,7 +1887,7 @@ export default function RubikCubeTrainer() {
         <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, margin: '0 16px', padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
           <div style={{ width: '100%', height: 400, overflow: "hidden", position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div ref={cubeRef} style={{ width: 200, height: 200, touchAction: 'none' }}>
-              <Cube3D rx={rx} ry={ry} facelets={(learnMode && learnFacelets) ? learnFacelets : (cubeFacelets || undefined)} size={180} />
+              <Cube3D rx={rx} ry={ry} facelets={(learnMode && learnFacelets) ? learnFacelets : (cubeFacelets || undefined)} rotatingFace={learnRotatingFace} rotationAngle={learnRotationAngle} size={180} />
             </div>
           </div>
           <div style={{ marginTop: 12, fontSize: 11, color: '#475569' }}>拖拽旋转魔方</div>
@@ -2005,7 +2079,7 @@ export default function RubikCubeTrainer() {
             <div style={{ background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, height: 400, overflow: "hidden" }}>
               <div style={{ flex: 1, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 <div ref={cubeRef} style={{ width: 240, height: 240, touchAction: 'none' }}>
-                  <Cube3D rx={rx} ry={ry} facelets={(learnMode && learnFacelets) ? learnFacelets : (cubeFacelets || undefined)} size={220} />
+                  <Cube3D rx={rx} ry={ry} facelets={(learnMode && learnFacelets) ? learnFacelets : (cubeFacelets || undefined)} rotatingFace={learnRotatingFace} rotationAngle={learnRotationAngle} size={220} />
                 </div>
               </div>
               <div style={{ marginTop: 8, fontSize: 11, color: '#475569' }}>拖拽旋转魔方</div>
@@ -2304,7 +2378,7 @@ export default function RubikCubeTrainer() {
           <div style={{ fontSize: 24, fontWeight: 700, color: '#e2e8f0', marginBottom: 8 }}>{formula.id}: {formula.name}</div>
           <div style={{ fontSize: 14, color: '#94a3b8', marginBottom: 24 }}>{formula.description}</div>
           <div style={{ marginBottom: 24 }}>
-            <Cube3D rx={rx} ry={ry} facelets={(learnMode && learnFacelets) ? learnFacelets : (cubeFacelets || undefined)} size={280} />
+            <Cube3D rx={rx} ry={ry} facelets={(learnMode && learnFacelets) ? learnFacelets : (cubeFacelets || undefined)} rotatingFace={learnRotatingFace} rotationAngle={learnRotationAngle} size={280} />
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 24, maxWidth: 600 }}>
             {formula.formula.split(/\s+/).filter(Boolean).flatMap((step): { display: string; isSkip: boolean }[] => {
