@@ -1691,61 +1691,58 @@ export default function RubikCubeTrainer() {
       setLearnPlaying(false);
       if (learnTimerRef.current) clearInterval(learnTimerRef.current);
     } else {
+      // 初始化：显示还原状态
       if (learnStep === 0) {
-        const solvedFacelets = getSolvedFacelets();
-        setLearnFacelets(solvedFacelets);
+        setLearnFacelets(getSolvedFacelets());
       }
       setLearnPlaying(true);
-      let animationFrame: number | null = null;
-      let startTime = Date.now();
-      const ANIMATION_DURATION = 800; // 800ms per step
-      
-      learnTimerRef.current = setInterval(() => {
-        setLearnStep(prev => {
-          const nextStep = prev + 1;
-          if (nextStep >= steps.length) {
-            setLearnPlaying(false);
+      const ANIMATION_DURATION = 600; // 动画时长
+
+      // 递归执行每一步：先播放动画，动画结束后再更新颜色
+      const executeStep = (stepIdx: number) => {
+        if (stepIdx >= steps.length || !learnPlaying) {
+          setLearnPlaying(false);
+          setLearnRotatingFace(null);
+          setLearnRotationAngle(0);
+          return;
+        }
+
+        const move = steps[stepIdx];
+        const face = move[0];
+        const isPrime = move.includes("'");
+        const isDouble = move.includes("2");
+        const targetAngle = isPrime ? -90 : 90;
+
+        // 1. 开始旋转动画（颜色保持不变，方块带着颜色旋转）
+        setLearnRotatingFace(face);
+        setLearnStep(stepIdx);
+        const startTime = Date.now();
+
+        const animate = () => {
+          const elapsed = Date.now() - startTime;
+          const progress = Math.min(elapsed / ANIMATION_DURATION, 1);
+          // ease-out 缓动
+          const eased = 1 - Math.pow(1 - progress, 3);
+          setLearnRotationAngle(targetAngle * eased);
+
+          if (progress < 1) {
+            requestAnimationFrame(animate);
+          } else {
+            // 2. 动画完成：方块已到达新位置，更新颜色状态
             setLearnRotatingFace(null);
             setLearnRotationAngle(0);
-            if (learnTimerRef.current) clearInterval(learnTimerRef.current);
-            if (animationFrame) cancelAnimationFrame(animationFrame);
-            return prev;
+            const formulaToApply = steps.slice(0, stepIdx + 1).join(' ');
+            setLearnFacelets(applyFormulaToFacelets(getSolvedFacelets(), formulaToApply));
+
+            // 3. 延迟后执行下一步
+            setTimeout(() => executeStep(stepIdx + 1), 300);
           }
-          
-          // 获取当前步骤的移动
-          const currentMove = steps[nextStep];
-          const face = currentMove[0];
-          const isPrime = currentMove.includes("'");
-          const targetAngle = isPrime ? -90 : 90;
-          
-          // 开始旋转动画
-          setLearnRotatingFace(face);
-          startTime = Date.now();
-          
-          const animate = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(elapsed / ANIMATION_DURATION, 1);
-            const currentAngle = targetAngle * progress;
-            setLearnRotationAngle(currentAngle);
-            
-            if (progress < 1) {
-              animationFrame = requestAnimationFrame(animate);
-            } else {
-              // 动画完成，更新魔方状态
-              setLearnRotatingFace(null);
-              setLearnRotationAngle(0);
-              const stepsToApply = steps.slice(0, nextStep + 1);
-              const formulaToApply = stepsToApply.join(' ');
-              const currentFacelets = getSolvedFacelets();
-              const newFacelets = applyFormulaToFacelets(currentFacelets, formulaToApply);
-              setLearnFacelets(newFacelets);
-            }
-          };
-          animationFrame = requestAnimationFrame(animate);
-          
-          return nextStep;
-        });
-      }, 1000);
+        };
+        requestAnimationFrame(animate);
+      };
+
+      // 从当前步骤开始执行
+      setTimeout(() => executeStep(learnStep), 100);
     }
   }, [formula, learnPlaying, learnStep]);
 
