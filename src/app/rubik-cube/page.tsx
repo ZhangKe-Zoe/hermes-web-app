@@ -480,18 +480,16 @@ const Cube3D = React.memo(function Cube3D({ rx, ry, facelets, size = 180, rotati
     }
   };
 
-  // 获取旋转面的旋转轴和角度
-  // CSS坐标系: X右, Y下, Z朝观察者
-  // 旋转方向基于物理魔方: CW = 顺时针(从该面外侧看)
+  // 获取旋转面的旋转轴和角度（恢复第一版旋转方向）
   const getFaceRotation = (face: string) => {
     const angle = rotationAngle || 0;
     switch (face) {
-      case 'U': return { axis: 'Y', angle: -angle }; // CW from above = -Y in CSS
-      case 'D': return { axis: 'Y', angle: -angle }; // CW from below = -Y in CSS (Y is already inverted)
-      case 'F': return { axis: 'Z', angle: -angle }; // CW from front = -Z in CSS
-      case 'B': return { axis: 'Z', angle: angle };  // CW from back = +Z in CSS
-      case 'R': return { axis: 'X', angle: -angle }; // CW from right = -X in CSS
-      case 'L': return { axis: 'X', angle: angle };  // CW from left = +X in CSS
+      case 'U': return { axis: 'Y', angle };
+      case 'D': return { axis: 'Y', angle: -angle };
+      case 'F': return { axis: 'Z', angle };
+      case 'B': return { axis: 'Z', angle: -angle };
+      case 'R': return { axis: 'X', angle };
+      case 'L': return { axis: 'X', angle: -angle };
       default: return { axis: 'Y', angle: 0 };
     }
   };
