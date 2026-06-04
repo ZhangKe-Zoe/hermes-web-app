@@ -797,9 +797,10 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
 }
 
 // ── Formula Detail Card (shared between mobile & desktop) ──
-function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, time, recentMoves, onStart, onReset, onFullscreen }: {
+function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, time, recentMoves, onStart, onReset, onFullscreen, paused, pauseExpected, onResume }: {
   formula: Formula; practicing: boolean; moves: string[]; wrongs: Set<number>; hlStep: number;
   progress: number; time: number; recentMoves: RecentMove[]; onStart: () => void; onReset: () => void; onFullscreen?: () => void;
+  paused?: boolean; pauseExpected?: string | null; onResume?: () => void;
 }) {
   // Expand formula steps for display (same logic as matching)
   const expandedSteps: { display: string; isSkip: boolean; isDouble?: boolean; part?: number }[] = formula.formula.split(/\s+/).filter(Boolean).flatMap((step): { display: string; isSkip: boolean; isDouble?: boolean; part?: number }[] => {
@@ -868,6 +869,17 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
           </div>
           <div style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 8 }}>{time.toFixed(1)}s · 步骤 {moves.length}/{expandedSteps.length}</div>
         </>
+      )}
+      {/* Pause overlay - wrong move correction */}
+      {paused && pauseExpected && (
+        <div style={{ marginTop: 12, padding: 12, background: 'rgba(248,113,113,0.1)', borderRadius: 10, border: '1px solid rgba(248,113,113,0.3)', textAlign: 'center' }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#f87171', marginBottom: 8 }}>⏸️ 错误动作</div>
+          <div style={{ fontSize: 24, fontFamily: '"SF Mono", Menlo, monospace', fontWeight: 700, color: '#4ade80', marginBottom: 8 }}>{pauseExpected}</div>
+          <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>请执行上述正确动作</div>
+          {onResume && (
+            <button onClick={onResume} style={{ padding: '8px 24px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: '#06b6d4', color: '#fff' }}>▶ 继续</button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -970,6 +982,10 @@ export default function RubikCubeTrainer() {
   const [drillQueue, setDrillQueue] = useState<Formula[]>([]);
   const [drillIndex, setDrillIndex] = useState(0);
   const [drillStats, setDrillStats] = useState<{ total: number; correct: number; wrong: number; totalTime: number }>({ total: 0, correct: 0, wrong: 0, totalTime: 0 });
+  
+  // ── Wrong move pause ──
+  const [paused, setPaused] = useState(false);
+  const [pauseExpected, setPauseExpected] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showNotation, setShowNotation] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -1066,6 +1082,9 @@ export default function RubikCubeTrainer() {
   }, []);
 
   const handleMove = useCallback((move: string) => {
+    // Block moves when paused (after wrong move)
+    if (paused) return;
+    
     setLastMove(move);
     addLog(`🎲 ${move}`, 'success');
 
@@ -1099,6 +1118,9 @@ export default function RubikCubeTrainer() {
           setStats(p => ({ ...p, wrong: p.wrong + 1, streak: 0 }));
           setWrongs(p => new Set(p).add(idx));
           addLog(`❌ 期望${step.display}，实际${move}`, 'error');
+          // Pause on wrong move - highlight expected
+          setPaused(true);
+          setPauseExpected(step.display);
         }
         setMoves(p => [...p, move]);
         if (idx + 1 === steps.length && act === exp) {
@@ -1286,6 +1308,12 @@ export default function RubikCubeTrainer() {
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => { if (startRef.current) setTime(parseFloat(((Date.now() - startRef.current) / 1000).toFixed(1))); }, 100);
   }, [formulas, cat, addLog]);
+
+  const resumePractice = useCallback(() => {
+    setPaused(false);
+    setPauseExpected(null);
+    addLog('▶ 继续练习', 'info');
+  }, [addLog]);
 
   const advanceDrill = useCallback(() => {
     const nextIdx = drillIndex + 1;
@@ -1557,7 +1585,7 @@ export default function RubikCubeTrainer() {
         {/* Formula detail */}
         {formula && (
           <div style={{ padding: '0 16px 16px' }}>
-            <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} />
+            <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} paused={paused} pauseExpected={pauseExpected} onResume={resumePractice} />
           </div>
         )}
       </div>
@@ -1758,7 +1786,7 @@ export default function RubikCubeTrainer() {
               </div>
             )}
 
-            {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} />}
+            {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} paused={paused} pauseExpected={pauseExpected} onResume={resumePractice} />}
             {/* History Toggle */}
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setShowHistory(p => !p)} style={{ flex: 1, padding: '8px 16px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showHistory ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.9)', color: showHistory ? '#0891b2' : '#475569', cursor: 'pointer' }}>{'\U0001F4CA'} {'\u5386\u53f2\u8bb0\u5f55'}</button>
