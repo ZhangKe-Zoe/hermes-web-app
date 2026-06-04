@@ -156,43 +156,72 @@ function getSolvedFacelets(scheme: Record<number, string> = DEFAULT_CUBE_COLORS)
 }
 
 function rotateFace(facelets: string[], face: string, clockwise = true): string[] {
-  const newFacelets = [...facelets];
-  const faceStart: Record<string, number> = { U: 0, R: 9, F: 18, D: 27, L: 36, B: 45 };
-  const start = faceStart[face];
-  const faceIndices = [start, start+1, start+2, start+5, start+8, start+7, start+6, start+3];
-  const temp = faceIndices.map(i => newFacelets[i]);
-  if (clockwise) {
-    for (let i = 0; i < 8; i++) newFacelets[faceIndices[(i+1)%8]] = temp[i];
-  } else {
-    for (let i = 7; i >= 0; i--) newFacelets[faceIndices[(i+1)%8]] = temp[i];
+  const f = [...facelets];
+  
+  // 面内旋转 (顺时针: 0->2->8->6->0, 1->5->7->3->1)
+  const s: Record<string, number> = { U: 0, R: 9, F: 18, D: 27, L: 36, B: 45 };
+  const o = s[face];
+  
+  // 面内8个位置的旋转
+  const facePerm = [o, o+1, o+2, o+5, o+8, o+7, o+6, o+3];
+  const temp = facePerm.map(i => f[i]);
+  for (let i = 0; i < 8; i++) {
+    f[facePerm[(i + (clockwise ? 2 : 6)) % 8]] = temp[i];
   }
-  const adj: Record<string, number[][]> = {
-    U: [[45,46,47],[9,10,11],[18,19,20],[36,37,38]],
-    R: [[2,5,8],[20,23,26],[29,32,35],[47,50,53]],
-    F: [[6,7,8],[9,12,15],[2,1,0],[44,41,38]],
-    D: [[24,25,26],[15,16,17],[33,34,35],[51,52,53]],
-    L: [[0,3,6],[18,21,24],[27,30,33],[53,50,47]],
-    B: [[8,5,2],[36,39,42],[35,34,33],[17,14,11]]
+  
+  // 相邻面的边块交换
+  // 标准魔方布局:
+  //       U(0-8)
+  // L(36-44) F(18-26) R(9-17) B(45-53)
+  //       D(27-35)
+  
+  const adj: Record<string, { src: number[][]; dst: number[][] }> = {
+    U: {
+      src: [[45,46,47], [9,10,11], [18,19,20], [36,37,38]],  // B-top, R-top, F-top, L-top
+      dst: [[9,10,11], [18,19,20], [36,37,38], [45,46,47]]   // 顺时针: B->R->F->L->B
+    },
+    D: {
+      src: [[18,25,26], [9,16,17], [45,52,53], [36,43,44]],  // F-bottom, R-bottom, B-bottom, L-bottom
+      dst: [[9,16,17], [45,52,53], [36,43,44], [18,25,26]]   // 顺时针: F->R->B->L->F
+    },
+    F: {
+      src: [[6,7,8], [9,12,15], [29,28,27], [44,41,38]],     // U-bottom, R-left, D-top(rev), L-right(rev)
+      dst: [[9,12,15], [29,28,27], [44,41,38], [6,7,8]]      // 顺时针: U->R->D->L->U
+    },
+    B: {
+      src: [[2,1,0], [36,39,42], [33,34,35], [17,14,11]],    // U-top(rev), L-left, D-bottom, R-right(rev)
+      dst: [[36,39,42], [33,34,35], [17,14,11], [2,1,0]]     // 顺时针: U->L->D->R->U
+    },
+    R: {
+      src: [[2,5,8], [18,21,24], [29,32,35], [47,50,53]],    // U-right, F-right, D-right, B-left(rev)
+      dst: [[18,21,24], [29,32,35], [47,50,53], [2,5,8]]     // 顺时针: U->F->D->B->U
+    },
+    L: {
+      src: [[0,3,6], [45,48,51], [27,30,33], [20,23,26]],    // U-left, B-right(rev), D-left, F-left
+      dst: [[45,48,51], [27,30,33], [20,23,26], [0,3,6]]     // 顺时针: U->B->D->F->U
+    }
   };
-  const adjIndices = adj[face];
+  
+  const { src, dst } = adj[face];
   if (clockwise) {
-    const t = adjIndices[0].map(i => newFacelets[i]);
+    const temp = src[0].map(i => f[i]);
     for (let i = 0; i < 3; i++) {
-      newFacelets[adjIndices[0][i]] = newFacelets[adjIndices[3][i]];
-      newFacelets[adjIndices[3][i]] = newFacelets[adjIndices[2][i]];
-      newFacelets[adjIndices[2][i]] = newFacelets[adjIndices[1][i]];
-      newFacelets[adjIndices[1][i]] = t[i];
+      f[dst[0][i]] = f[src[3][i]];
+      f[dst[1][i]] = f[src[0][i]];
+      f[dst[2][i]] = f[src[1][i]];
+      f[dst[3][i]] = f[src[2][i]];
     }
   } else {
-    const t = adjIndices[0].map(i => newFacelets[i]);
+    const temp = src[0].map(i => f[i]);
     for (let i = 0; i < 3; i++) {
-      newFacelets[adjIndices[0][i]] = newFacelets[adjIndices[1][i]];
-      newFacelets[adjIndices[1][i]] = newFacelets[adjIndices[2][i]];
-      newFacelets[adjIndices[2][i]] = newFacelets[adjIndices[3][i]];
-      newFacelets[adjIndices[3][i]] = t[i];
+      f[dst[0][i]] = f[src[1][i]];
+      f[dst[1][i]] = f[src[2][i]];
+      f[dst[2][i]] = f[src[3][i]];
+      f[dst[3][i]] = f[src[0][i]];
     }
   }
-  return newFacelets;
+  
+  return f;
 }
 
 function applyMove(facelets: string[], move: string): string[] {
