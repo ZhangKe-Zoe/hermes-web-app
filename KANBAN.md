@@ -1,6 +1,6 @@
 # 🎲 Rubik's Cube Trainer - Kanban Board
 
-## ✅ Done (21)
+## ✅ Done (27)
 
 | # | Task | Commit | Status |
 |:--|:-----|:-------|:-------|
@@ -28,56 +28,49 @@
 | 22 | Drill mode (×5/×10/×20 sequential) | `58c71e1` | ✅ |
 | 23 | Personalized recommendations | `b2e4b42` | ✅ |
 | 24 | 3D cube React.memo optimization | `pending` | ✅ |
+| 25 | Enhanced OLL/PLL case recognition | `734402d` | ✅ |
+| 26 | Mobile drill mode buttons | `b5cf6d1` | ✅ |
+| 27 | Kanban board management | `dbc707b` | ✅ |
 
-## 🔄 In Progress
-
-| # | Task | Priority | Est. |
-|:--|:-----|:---------|:-----|
-| 25 | OLL/PLL case recognition system | 🔴 High | 2h |
-
-## 📋 Todo — Phase 1: Core Experience (2h)
+## 📋 Todo (11 remaining)
 
 | # | Task | Priority | Est. |
 |:--|:-----|:---------|:-----|
-| 26 | Formula visual diagram — SVG mini-cube showing before/after state | 🔴 High | 1h |
-| 27 | Wrong move correction — auto-pause on error, highlight expected move | 🔴 High | 30m |
-| 28 | Practice mode: timed drill — best time per formula, PB tracking | 🟡 Med | 30m |
-
-## 📋 Todo — Phase 2: Solve Analysis (2h)
-
-| # | Task | Priority | Est. |
-|:--|:-----|:---------|:-----|
-| 29 | Solve reconstruction — track full solve from BLE state changes | 🔴 High | 1h |
-| 30 | Phase timing breakdown — cross/F2L/OLL/PLL time per solve | 🔴 High | 30m |
-| 31 | Solve statistics dashboard — charts for solve times, accuracy trends | 🟡 Med | 30m |
-
-## 📋 Todo — Phase 3: Learning System (2h)
-
-| # | Task | Priority | Est. |
-|:--|:-----|:---------|:-----|
-| 32 | Learn mode — animated step-by-step demo on 3D cube | 🔴 High | 1.5h |
-| 33 | Case recognition training — show cube pattern, user picks formula | 🟡 Med | 30m |
-
-## 📋 Todo — Phase 4: Polish & Extras (2h)
-
-| # | Task | Priority | Est. |
-|:--|:-----|:---------|:-----|
-| 34 | Cube color scheme presets (standard/competition/custom) | 🟡 Med | 30m |
-| 35 | Competitive mode — compare with global averages per formula | 🟢 Low | 30m |
-| 36 | Mobile drill mode buttons (currently desktop only) | 🟡 Med | 15m |
-| 37 | Full dark mode — update all card/text colors for theme | 🟡 Med | 30m |
-| 38 | Code cleanup — extract shared types, deduplicate expand logic | 🟡 Med | 30m |
+| 28 | Formula visual diagram — SVG mini-cube | 🟡 Med | 1h |
+| 29 | Wrong move correction — auto-pause on error | 🔴 High | 30m |
+| 30 | Timed drill — best time per formula, PB tracking | 🟡 Med | 30m |
+| 31 | Solve reconstruction — track full solve | 🔴 High | 1h |
+| 32 | Phase timing breakdown (cross/F2L/OLL/PLL) | 🟡 Med | 30m |
+| 33 | Solve statistics dashboard — charts | 🟡 Med | 30m |
+| 34 | Learn mode — animated 3D demo | 🟡 Med | 1.5h |
+| 35 | Case recognition training game | 🟢 Low | 30m |
+| 36 | Cube color scheme presets | 🟢 Low | 30m |
+| 37 | Competitive mode — global averages | 🟢 Low | 30m |
+| 38 | Full dark mode polish | 🟢 Low | 30m |
 
 ---
 
-## 🏗️ Architecture Notes
+## 🏗️ Architecture Summary
 
-- **BLE Protocol**: QiYi QY-QYSC-S-CC3E, service `fff0`, char `fff6`, AES-128-ECB
-- **Move bytes**: 0x01-0x0C only (L/L'/R/R'/U/U'/D/D'/F/F'/B/B'), no double/slice/wide moves
-- **Formula expansion**: `expandSteps()` converts U2→[U,U], skips M/r/x/y/z
-- **Framework**: Next.js 15, no Tailwind (inline styles), Vercel deploy
-- **State**: React hooks + localStorage for persistence
-- **3D**: CSS `transform-style: preserve-3d` with 27 cubies
+**BLE Protocol (QiYi Smart Cube)**:
+- Service: `0000fff0-0000-1000-8000-00805f9b34fb`
+- Char: `0000fff6` (read+write+notify)
+- AES-128-ECB key: `57b1f9abcd5ae8a79cb98ce7578c5108`
+- Move bytes: `0x01-0x0C` (L/L'/R/R'/U/U'/D/D'/F/F'/B/B')
+
+**Formula Expansion Engine**:
+- `expandSteps()`: U2→[U,U], R2→[R,R], etc.
+- Auto-skip: M, r, x, y, z (BLE undetectable)
+
+**Case Recognition**:
+- `recognizeOLLCase()`: dot, L-shape, line, cross, fish patterns
+- `recognizePLLCase()`: H, Z, Ua, Ub, T, Y, V, Na patterns
+
+**Practice Modes**:
+- Single formula practice
+- Drill mode (×5/×10/×20 random formulas)
+- Timer mode (space bar, AO5/AO12)
+- Fullscreen immersive mode
 
 ## 🔗 Links
 
@@ -86,4 +79,4 @@
 - **BLE Protocol**: https://codeberg.org/Flying-Toast/qiyi_smartcube_protocol
 
 ---
-*Last updated: 2026-06-04 — 24 done, 1 in progress, 13 todo*
+*Last updated: 2026-06-04 — 27 done, 11 remaining*
