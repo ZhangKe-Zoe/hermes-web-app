@@ -481,15 +481,17 @@ const Cube3D = React.memo(function Cube3D({ rx, ry, facelets, size = 180, rotati
   };
 
   // 获取旋转面的旋转轴和角度
+  // CSS坐标系: X右, Y下, Z朝观察者
+  // 旋转方向基于物理魔方: CW = 顺时针(从该面外侧看)
   const getFaceRotation = (face: string) => {
     const angle = rotationAngle || 0;
     switch (face) {
-      case 'U': return { axis: 'Y', angle };
-      case 'D': return { axis: 'Y', angle: -angle };
-      case 'F': return { axis: 'Z', angle };
-      case 'B': return { axis: 'Z', angle: -angle };
-      case 'R': return { axis: 'X', angle };
-      case 'L': return { axis: 'X', angle: -angle };
+      case 'U': return { axis: 'Y', angle: -angle }; // CW from above = -Y in CSS
+      case 'D': return { axis: 'Y', angle: -angle }; // CW from below = -Y in CSS (Y is already inverted)
+      case 'F': return { axis: 'Z', angle: -angle }; // CW from front = -Z in CSS
+      case 'B': return { axis: 'Z', angle: angle };  // CW from back = +Z in CSS
+      case 'R': return { axis: 'X', angle: -angle }; // CW from right = -X in CSS
+      case 'L': return { axis: 'X', angle: angle };  // CW from left = +X in CSS
       default: return { axis: 'Y', angle: 0 };
     }
   };
@@ -1746,6 +1748,62 @@ export default function RubikCubeTrainer() {
     }
   }, [formula, learnPlaying, learnStep]);
 
+  // ── Manual Rotation Control ──
+  const [manualRotating, setManualRotating] = useState(false);
+  const manualRotateRef = useRef(false);
+  const manualFormulaRef = useRef('');
+
+  const manualRotateAndUpdate = useCallback((move: string) => {
+    if (manualRotateRef.current) return;
+    manualRotateRef.current = true;
+    setManualRotating(true);
+
+    const face = move[0];
+    const isPrime = move.includes("'");
+    const targetAngle = isPrime ? -90 : 90;
+    const ANIMATION_DURATION = 400;
+
+    setLearnRotatingFace(face);
+    const startTime = Date.now();
+
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / ANIMATION_DURATION, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setLearnRotationAngle(targetAngle * eased);
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        setLearnRotatingFace(null);
+        setLearnRotationAngle(0);
+
+        // Update cube state
+        manualFormulaRef.current = manualFormulaRef.current
+          ? manualFormulaRef.current + ' ' + move
+          : move;
+        const newFacelets = applyFormulaToFacelets(getSolvedFacelets(), manualFormulaRef.current);
+        setCubeFacelets(newFacelets);
+        cubeFaceletsRef.current = newFacelets;
+        addLog('🔄 ' + move, 'info');
+
+        setTimeout(() => {
+          manualRotateRef.current = false;
+          setManualRotating(false);
+        }, 100);
+      }
+    };
+    requestAnimationFrame(animate);
+  }, [addLog]);
+
+  const resetCube = useCallback(() => {
+    manualFormulaRef.current = '';
+    const solved = getSolvedFacelets();
+    setCubeFacelets(solved);
+    cubeFaceletsRef.current = solved;
+    addLog('🔄 重置魔方', 'info');
+  }, [addLog]);
+
   const resumePractice = useCallback(() => {
     setPaused(false);
     setPauseExpected(null);
@@ -1919,6 +1977,26 @@ export default function RubikCubeTrainer() {
             </div>
           </div>
           <div style={{ marginTop: 12, fontSize: 11, color: '#475569' }}>拖拽旋转魔方</div>
+          {/* Manual Rotation Controls */}
+          <div style={{ marginTop: 12, padding: '12px 16px', background: 'rgba(255,255,255,0.9)', borderRadius: 12, border: '1px solid rgba(0,0,0,0.08)' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 8 }}>手动旋转</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+              {['R', "R'", 'U', "U'", 'F', "F'", 'D', "D'", 'L', "L'", 'B', "B'"].map(move => (
+                <button key={move} onClick={() => manualRotateAndUpdate(move)} disabled={manualRotating}
+                  style={{ padding: '6px 8px', fontSize: 13, fontWeight: 600, fontFamily: '"SF Mono", Menlo, monospace',
+                    borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', cursor: manualRotating ? 'not-allowed' : 'pointer',
+                    background: move.includes("'") ? 'rgba(248,113,113,0.1)' : 'rgba(34,211,238,0.1)',
+                    color: move.includes("'") ? '#f87171' : '#0891b2', opacity: manualRotating ? 0.5 : 1 }}>
+                  {move}
+                </button>
+              ))}
+            </div>
+            <button onClick={resetCube} style={{ marginTop: 8, padding: '6px 16px', fontSize: 12, fontWeight: 600,
+              borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.8)',
+              color: '#64748b', cursor: 'pointer', width: '100%' }}>
+              🔄 重置魔方
+            </button>
+          </div>
           <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 8 }}>
             <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => setTimerMode(p => !p)} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: timerMode ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.9)', color: timerMode ? '#0891b2' : '#475569', cursor: 'pointer' }}>{'\u23F1'} {'\u8ba1\u65f6'}</button>
