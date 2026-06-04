@@ -13,17 +13,17 @@
 | 30 | Statistics dashboard with charts | `51b21fe` | ✅ |
 | 31 | Learn mode (animated demo) | `7f21aa6` | ✅ |
 | 32 | Cube color scheme presets | `71a0f84` | ✅ |
+| 33 | Learn mode UI optimization | `cc67d81` | ✅ |
 
-## 📋 Todo (6 remaining)
+## 📋 Todo (5 remaining)
 
 | # | Task | Priority | Est. |
 |:--|:-----|:---------|:-----|
-| 33 | Case recognition training game | 🟢 Low | 30m |
-| 34 | Competitive mode — global averages | 🟢 Low | 30m |
-| 35 | Full dark mode polish | 🟢 Low | 30m |
-| 36 | Formula visual diagram (SVG) | 🟡 Med | 1h |
-| 37 | Code cleanup & deduplication | 🟡 Med | 30m |
-| 38 | Performance optimization | 🟡 Med | 30m |
+| 34 | Case recognition training game | 🟢 Low | 30m |
+| 35 | Competitive mode — global averages | 🟢 Low | 30m |
+| 36 | Full dark mode polish | 🟢 Low | 30m |
+| 37 | Formula visual diagram (SVG) | 🟡 Med | 1h |
+| 38 | Code cleanup & deduplication | 🟡 Med | 30m |
 
 ---
 
@@ -54,4 +54,5 @@
 - **Repo**: https://github.com/ZhangKe-Zoe/hermes-web-app
 
 ---
-*Last updated: 2026-06-04 — 4h Sprint Complete: 33 done, 6 remaining*
+
+*Last updated: 2026-06-04 — Sprint 2 Progress: 33 done, 5 remaining*
