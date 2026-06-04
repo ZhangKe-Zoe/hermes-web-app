@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import aesjs from 'aes-js';
 
 // ── Types ──
@@ -312,7 +312,7 @@ const formulaLibrary: Record<string, Formula[]> = {
 // L face (orange on left): facelets[36..44]
 // B face (blue on back): facelets[45..53]
 
-function Cube3D({ rx, ry, facelets, size = 180 }: { rx: number; ry: number; facelets?: string[]; size?: number }) {
+const Cube3D = React.memo(function Cube3D({ rx, ry, facelets, size = 180 }: { rx: number; ry: number; facelets?: string[]; size?: number }) {
   const defaultF = useMemo(() => {
     const f: string[] = [];
     for (let i = 0; i < 9; i++) f.push('#FFFFFF'); // U
@@ -396,7 +396,7 @@ function Cube3D({ rx, ry, facelets, size = 180 }: { rx: number; ry: number; face
       </div>
     </div>
   );
-}
+});
 
 // ── Helper: color hex → Chinese name ──
 function colorName(hex: string): string {
