@@ -825,11 +825,11 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
 }
 
 // ── Formula Detail Card (shared between mobile & desktop) ──
-function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, time, recentMoves, onStart, onReset, onFullscreen, paused, pauseExpected, onResume, pbTime, learnMode, learnStep, onLearn, onLearnPlay, learnPlaying }: {
+function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, time, recentMoves, onStart, onReset, onFullscreen, paused, pauseExpected, onResume, pbTime, learnMode, learnStep, onLearn, onLearnStop, onLearnPlay, learnPlaying }: {
   formula: Formula; practicing: boolean; moves: string[]; wrongs: Set<number>; hlStep: number;
   progress: number; time: number; recentMoves: RecentMove[]; onStart: () => void; onReset: () => void; onFullscreen?: () => void;
   paused?: boolean; pauseExpected?: string | null; onResume?: () => void; pbTime?: number | null;
-  learnMode?: boolean; learnStep?: number; onLearn?: () => void; onLearnPlay?: () => void; learnPlaying?: boolean;
+  learnMode?: boolean; learnStep?: number; onLearn?: () => void; onLearnStop?: () => void; onLearnPlay?: () => void; learnPlaying?: boolean;
 }) {
   // Expand formula steps for display (same logic as matching)
   const expandedSteps: { display: string; isSkip: boolean; isDouble?: boolean; part?: number }[] = formula.formula.split(/\s+/).filter(Boolean).flatMap((step): { display: string; isSkip: boolean; isDouble?: boolean; part?: number }[] => {
@@ -854,7 +854,7 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
           <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>{formula.description}{pbTime ? ` · PB: ${pbTime}s` : ''}</p>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          {onLearn && <button onClick={onLearn} style={{ padding: '8px 12px', fontSize: 13, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: learnMode ? 'rgba(34,211,238,0.15)' : 'rgba(255,255,255,0.06)', color: learnMode ? '#22d3ee' : '#64748b', cursor: 'pointer' }}>📖</button>}
+          {onLearn && <button onClick={onLearn} style={{ padding: '8px 12px', fontSize: 13, borderRadius: 8, border: learnMode ? '2px solid #22d3ee' : '1px solid rgba(0,0,0,0.1)', background: learnMode ? 'rgba(34,211,238,0.2)' : 'rgba(255,255,255,0.06)', color: learnMode ? '#22d3ee' : '#64748b', cursor: 'pointer', transition: 'all 0.3s' }}>📖 {learnMode ? '学习中' : '学习'}</button>}
           {onFullscreen && <button onClick={onFullscreen} style={{ padding: '8px 12px', fontSize: 13, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.06)', color: '#64748b', cursor: 'pointer' }}>⛶</button>}
           {!practicing ? <button onClick={onStart} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: '#06b6d4', color: '#fff' }}>▶ 开始</button> : <button onClick={onReset} style={{ padding: '8px 18px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.06)', color: '#94a3b8' }}>⏹ 重置</button>}
         </div>
@@ -884,11 +884,13 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
           <span key={i} style={{
             fontFamily: '"SF Mono", Menlo, monospace', fontSize: step.isDouble ? 13 : 16, fontWeight: 600,
             padding: step.isDouble ? '4px 8px' : '6px 12px', borderRadius: 8,
-            background: step.isSkip ? 'rgba(251,191,36,0.1)' : i === hlStep ? 'rgba(74,222,128,0.2)' : wrongs.has(i) ? 'rgba(248,113,113,0.2)' : i < moves.length ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)',
-            color: step.isSkip ? '#fbbf24' : i === hlStep ? '#4ade80' : wrongs.has(i) ? '#f87171' : i < moves.length ? '#94a3b8' : '#64748b',
-            border: `1px solid ${step.isSkip ? 'rgba(251,191,36,0.2)' : i === hlStep ? 'rgba(74,222,128,0.3)' : wrongs.has(i) ? 'rgba(248,113,113,0.3)' : 'rgba(255,255,255,0.06)'}`,
-            transition: 'all 0.15s',
+            background: step.isSkip ? 'rgba(251,191,36,0.1)' : learnMode && i === (learnStep || 0) ? 'rgba(34,211,238,0.3)' : i === hlStep ? 'rgba(74,222,128,0.2)' : wrongs.has(i) ? 'rgba(248,113,113,0.2)' : i < moves.length ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)',
+            color: step.isSkip ? '#fbbf24' : learnMode && i === (learnStep || 0) ? '#22d3ee' : i === hlStep ? '#4ade80' : wrongs.has(i) ? '#f87171' : i < moves.length ? '#94a3b8' : '#64748b',
+            border: `2px solid ${step.isSkip ? 'rgba(251,191,36,0.2)' : learnMode && i === (learnStep || 0) ? 'rgba(34,211,238,0.6)' : i === hlStep ? 'rgba(74,222,128,0.3)' : wrongs.has(i) ? 'rgba(248,113,113,0.3)' : 'rgba(255,255,255,0.06)'}`,
+            transition: 'all 0.3s',
             opacity: step.isDouble && step.part === 2 ? 0.7 : 1,
+            transform: learnMode && i === (learnStep || 0) ? 'scale(1.1)' : 'scale(1)',
+            boxShadow: learnMode && i === (learnStep || 0) ? '0 0 12px rgba(34,211,238,0.4)' : 'none',
           }}>{step.display}{step.isDouble && step.part === 2 ? '↳' : ''}{step.isSkip ? '⏭' : ''}</span>
         ))}
       </div>
@@ -913,18 +915,37 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
       )}
       {/* Learn mode controls */}
       {learnMode && (
-        <div style={{ marginTop: 12, padding: 12, background: 'rgba(34,211,238,0.1)', borderRadius: 10, border: '1px solid rgba(34,211,238,0.3)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: '#22d3ee' }}>📖 学习模式</div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button onClick={onLearnPlay} style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', background: learnPlaying ? 'rgba(248,113,113,0.15)' : '#06b6d4', color: learnPlaying ? '#f87171' : '#fff' }}>
-                {learnPlaying ? '⏸ 暂停' : '▶ 播放'}
+        <div style={{ marginTop: 12, padding: 16, background: 'linear-gradient(135deg, rgba(34,211,238,0.15), rgba(59,130,246,0.15))', borderRadius: 12, border: '2px solid rgba(34,211,238,0.4)', animation: 'pulse 2s infinite' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#22d3ee' }}>📖 学习模式</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={onLearnPlay} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: learnPlaying ? 'rgba(248,113,113,0.2)' : '#06b6d4', color: learnPlaying ? '#f87171' : '#fff', transition: 'all 0.2s' }}>
+                {learnPlaying ? '⏸ 暂停' : '▶ 播放动画'}
               </button>
-              <button onClick={() => { if (onLearn) onLearn(); }} style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.06)', color: '#64748b', cursor: 'pointer' }}>✕ 退出</button>
+              <button onClick={() => { if (onLearnStop) onLearnStop(); }} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.1)', color: '#64748b', cursor: 'pointer' }}>✕ 退出</button>
             </div>
           </div>
-          <div style={{ fontSize: 12, color: '#64748b', textAlign: 'center' }}>
-            步骤 {(learnStep || 0) + 1}/{expandedSteps.length}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <div style={{ flex: 1, height: 8, background: 'rgba(255,255,255,0.1)', borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${((learnStep || 0) + 1) / expandedSteps.length * 100}%`, background: 'linear-gradient(90deg, #22d3ee, #3b82f6)', borderRadius: 4, transition: 'width 0.3s' }} />
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#22d3ee', minWidth: 60, textAlign: 'right' }}>
+              {(learnStep || 0) + 1}/{expandedSteps.length}
+            </div>
+          </div>
+          <div style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', padding: '8px 0', lineHeight: 1.5 }}>
+            {learnPlaying ? (
+              <>
+                <div style={{ fontWeight: 600, color: '#22d3ee', marginBottom: 4 }}>🔄 正在播放动画</div>
+                <div>观察上方公式步骤的高亮变化，理解每一步的执行顺序</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontWeight: 600, color: '#06b6d4', marginBottom: 4 }}>📖 学习模式说明</div>
+                <div>自动播放公式的每一步，帮助你理解公式的执行过程</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: '#94a3b8' }}>上方步骤会高亮显示当前执行的步骤</div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1811,7 +1832,7 @@ export default function RubikCubeTrainer() {
         {/* Formula detail */}
         {formula && (
           <div style={{ padding: '0 16px 16px' }}>
-            <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} paused={paused} pauseExpected={pauseExpected} onResume={resumePractice} pbTime={formula ? pbTimes[formula.id] : null} learnMode={learnMode} learnStep={learnStep} onLearn={startLearnMode} onLearnPlay={toggleLearnPlay} learnPlaying={learnPlaying} />
+            <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} paused={paused} pauseExpected={pauseExpected} onResume={resumePractice} pbTime={formula ? pbTimes[formula.id] : null} learnMode={learnMode} learnStep={learnStep} onLearn={startLearnMode} onLearnStop={stopLearnMode} onLearnPlay={toggleLearnPlay} learnPlaying={learnPlaying} />
           </div>
         )}
       </div>
@@ -2036,7 +2057,7 @@ export default function RubikCubeTrainer() {
               </div>
             )}
 
-            {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} paused={paused} pauseExpected={pauseExpected} onResume={resumePractice} pbTime={formula ? pbTimes[formula.id] : null} learnMode={learnMode} learnStep={learnStep} onLearn={startLearnMode} onLearnPlay={toggleLearnPlay} learnPlaying={learnPlaying} />}
+            {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} paused={paused} pauseExpected={pauseExpected} onResume={resumePractice} pbTime={formula ? pbTimes[formula.id] : null} learnMode={learnMode} learnStep={learnStep} onLearn={startLearnMode} onLearnStop={stopLearnMode} onLearnPlay={toggleLearnPlay} learnPlaying={learnPlaying} />}
             {/* History Toggle */}
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setShowHistory(p => !p)} style={{ flex: 1, padding: '8px 16px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showHistory ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.9)', color: showHistory ? '#0891b2' : '#475569', cursor: 'pointer' }}>{'\U0001F4CA'} {'\u5386\u53f2\u8bb0\u5f55'}</button>
