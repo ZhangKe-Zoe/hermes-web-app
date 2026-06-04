@@ -1504,6 +1504,20 @@ export default function RubikCubeTrainer() {
         <div style={{ padding: '0 16px 8px' }}>
           <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="🔍 搜索公式 (名称/编号/序列)" style={{ width: '100%', padding: '8px 12px', fontSize: 13, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.9)', color: '#1e293b', outline: 'none', boxSizing: 'border-box' }} />
         </div>
+        {/* Drill mode buttons - mobile */}
+        <div style={{ display: 'flex', gap: 4, padding: '0 16px 8px' }}>
+          <button onClick={() => startDrill(5)} style={{ flex: 1, padding: '8px 8px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(168,85,247,0.15)', color: '#a855f7' }}>🏋️ ×5</button>
+          <button onClick={() => startDrill(10)} style={{ flex: 1, padding: '8px 8px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(168,85,247,0.15)', color: '#a855f7' }}>🏋️ ×10</button>
+          <button onClick={() => startDrill(20)} style={{ flex: 1, padding: '8px 8px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: 'rgba(168,85,247,0.15)', color: '#a855f7' }}>🏋️ ×20</button>
+        </div>
+        {drillMode && (
+          <div style={{ padding: '8px 16px', margin: '0 0 8px', background: 'rgba(168,85,247,0.05)' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#a855f7', marginBottom: 4 }}>🏋️ Drill: {drillIndex + 1}/{drillQueue.length}</div>
+            <div style={{ height: 3, background: 'rgba(0,0,0,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${((drillIndex + 1) / drillQueue.length) * 100}%`, background: '#a855f7', borderRadius: 2, transition: 'width 0.3s' }} />
+            </div>
+          </div>
+        )}
         {showNotation && (
           <div style={{ padding: '10px 16px', margin: '0 16px 8px', background: 'rgba(6,182,212,0.05)', borderRadius: 10, border: '1px solid rgba(0,0,0,0.08)' }}>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: '#475569' }}>公式符号说明</div>
