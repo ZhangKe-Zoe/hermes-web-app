@@ -1027,6 +1027,7 @@ export default function RubikCubeTrainer() {
     return {};
   });
   const [showHistory, setShowHistory] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [timerMode, setTimerMode] = useState(false);
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerTime, setTimerTime] = useState(0);
@@ -1922,7 +1923,61 @@ export default function RubikCubeTrainer() {
             {/* History Toggle */}
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setShowHistory(p => !p)} style={{ flex: 1, padding: '8px 16px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showHistory ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.9)', color: showHistory ? '#0891b2' : '#475569', cursor: 'pointer' }}>{'\U0001F4CA'} {'\u5386\u53f2\u8bb0\u5f55'}</button>
+              <button onClick={() => setShowStats(p => !p)} style={{ flex: 1, padding: '8px 16px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showStats ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.9)', color: showStats ? '#a855f7' : '#475569', cursor: 'pointer' }}>📊 统计</button>
             </div>
+
+            {/* Statistics Dashboard */}
+            {showStats && history.length > 0 && (
+              <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>📊 练习统计</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 12 }}>
+                  <div style={{ background: 'rgba(0,0,0,0.03)', borderRadius: 10, padding: 12, textAlign: 'center' }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#06b6d4' }}>{history.length}</div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>总练习次数</div>
+                  </div>
+                  <div style={{ background: 'rgba(0,0,0,0.03)', borderRadius: 10, padding: 12, textAlign: 'center' }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#10b981' }}>{Object.keys(pbTimes).length}</div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>有PB的公式</div>
+                  </div>
+                  <div style={{ background: 'rgba(0,0,0,0.03)', borderRadius: 10, padding: 12, textAlign: 'center' }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#f59e0b' }}>{history.length > 0 ? (history.reduce((sum, s) => sum + s.time, 0) / history.length).toFixed(1) : '0'}s</div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>平均用时</div>
+                  </div>
+                  <div style={{ background: 'rgba(0,0,0,0.03)', borderRadius: 10, padding: 12, textAlign: 'center' }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#8b5cf6' }}>{history.length > 0 ? (history.reduce((sum, s) => sum + s.correct, 0) / history.reduce((sum, s) => sum + s.moves, 0) * 100).toFixed(0) : '0'}%</div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>准确率</div>
+                  </div>
+                </div>
+                {/* Time chart - simple bar chart */}
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: '#475569' }}>最近用时趋势</div>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 60 }}>
+                    {history.slice(-20).map((s, i) => {
+                      const maxTime = Math.max(...history.slice(-20).map(h => h.time));
+                      const height = maxTime > 0 ? (s.time / maxTime) * 100 : 0;
+                      return (
+                        <div key={i} style={{ flex: 1, height: `${height}%`, background: 'linear-gradient(to top, #06b6d4, #22d3ee)', borderRadius: 2, minHeight: 2 }} title={`${s.formula}: ${s.time}s`} />
+                      );
+                    })}
+                  </div>
+                </div>
+                {/* Top formulas by practice count */}
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: '#475569' }}>最常练习</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {Object.entries(history.reduce((acc, s) => { acc[s.formula] = (acc[s.formula] || 0) + 1; return acc; }, {} as Record<string, number>))
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 5)
+                      .map(([formula, count]) => (
+                        <div key={formula} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 8px', borderRadius: 6, background: 'rgba(0,0,0,0.03)' }}>
+                          <span style={{ fontSize: 12, color: '#1e293b' }}>{formula}</span>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: '#06b6d4' }}>{count}次</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {showHistory && (
               <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16, maxHeight: 300, overflow: 'auto' }}>
