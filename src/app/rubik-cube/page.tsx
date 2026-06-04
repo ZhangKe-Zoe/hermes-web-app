@@ -797,10 +797,10 @@ function analyzeSolveStage(facelets: string[]): SolveStageResult {
 }
 
 // ── Formula Detail Card (shared between mobile & desktop) ──
-function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, time, recentMoves, onStart, onReset, onFullscreen, paused, pauseExpected, onResume }: {
+function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, time, recentMoves, onStart, onReset, onFullscreen, paused, pauseExpected, onResume, pbTime }: {
   formula: Formula; practicing: boolean; moves: string[]; wrongs: Set<number>; hlStep: number;
   progress: number; time: number; recentMoves: RecentMove[]; onStart: () => void; onReset: () => void; onFullscreen?: () => void;
-  paused?: boolean; pauseExpected?: string | null; onResume?: () => void;
+  paused?: boolean; pauseExpected?: string | null; onResume?: () => void; pbTime?: number | null;
 }) {
   // Expand formula steps for display (same logic as matching)
   const expandedSteps: { display: string; isSkip: boolean; isDouble?: boolean; part?: number }[] = formula.formula.split(/\s+/).filter(Boolean).flatMap((step): { display: string; isSkip: boolean; isDouble?: boolean; part?: number }[] => {
@@ -822,7 +822,7 @@ function FormulaDetail({ formula, practicing, moves, wrongs, hlStep, progress, t
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div>
           <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#1e293b' }}>{formula.id}: {formula.name}</h3>
-          <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>{formula.description}</p>
+          <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>{formula.description}{pbTime ? ` · PB: ${pbTime}s` : ''}</p>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           {onFullscreen && <button onClick={onFullscreen} style={{ padding: '8px 12px', fontSize: 13, borderRadius: 8, border: '1px solid rgba(0,0,0,0.1)', background: 'rgba(255,255,255,0.06)', color: '#64748b', cursor: 'pointer' }}>⛶</button>}
@@ -959,6 +959,14 @@ export default function RubikCubeTrainer() {
       try { return JSON.parse(localStorage.getItem("practice_history") || "[]"); } catch { return []; }
     }
     return [];
+  });
+  
+  // ── Personal Best tracking ──
+  const [pbTimes, setPbTimes] = useState<Record<string, number>>(() => {
+    if (typeof window !== "undefined") {
+      try { return JSON.parse(localStorage.getItem("pb_times") || "{}"); } catch { return {}; }
+    }
+    return {};
   });
   const [showHistory, setShowHistory] = useState(false);
   const [timerMode, setTimerMode] = useState(false);
@@ -1128,6 +1136,16 @@ export default function RubikCubeTrainer() {
           addLog("✅ 完成！" + t + "s", "success"); setPracticing(false);
           playSound('complete');
           if (timerRef.current) clearInterval(timerRef.current);
+          // Track Personal Best
+          if (formula) {
+            const timeNum = parseFloat(t);
+            const currentPb = pbTimes[formula.id];
+            if (!currentPb || timeNum < currentPb) {
+              setPbTimes(p => { const n = { ...p, [formula.id]: timeNum }; try { localStorage.setItem("pb_times", JSON.stringify(n)); } catch {} return n; });
+              if (currentPb) addLog(`🏆 新PB! ${formula.id}: ${t}s (之前${currentPb}s)`, 'success');
+              else addLog(`🏆 首次完成! ${formula.id}: ${t}s`, 'success');
+            }
+          }
           // Drill mode: advance to next formula
           if (drillMode) {
             setDrillStats(p => ({ ...p, total: p.total + 1, correct: p.correct + stats.correct, wrong: p.wrong + stats.wrong, totalTime: p.totalTime + parseFloat(t) }));
@@ -1585,7 +1603,7 @@ export default function RubikCubeTrainer() {
         {/* Formula detail */}
         {formula && (
           <div style={{ padding: '0 16px 16px' }}>
-            <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} paused={paused} pauseExpected={pauseExpected} onResume={resumePractice} />
+            <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} paused={paused} pauseExpected={pauseExpected} onResume={resumePractice} pbTime={formula ? pbTimes[formula.id] : null} />
           </div>
         )}
       </div>
@@ -1786,7 +1804,7 @@ export default function RubikCubeTrainer() {
               </div>
             )}
 
-            {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} paused={paused} pauseExpected={pauseExpected} onResume={resumePractice} />}
+            {formula && <FormulaDetail formula={formula} practicing={practicing} moves={moves} wrongs={wrongs} hlStep={hlStep} progress={progress} time={time} recentMoves={recentMovesDisplay} onStart={startPractice} onReset={resetPractice} onFullscreen={() => setFullscreen(true)} paused={paused} pauseExpected={pauseExpected} onResume={resumePractice} pbTime={formula ? pbTimes[formula.id] : null} />}
             {/* History Toggle */}
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setShowHistory(p => !p)} style={{ flex: 1, padding: '8px 16px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: '1px solid rgba(0,0,0,0.1)', background: showHistory ? 'rgba(6,182,212,0.15)' : 'rgba(255,255,255,0.9)', color: showHistory ? '#0891b2' : '#475569', cursor: 'pointer' }}>{'\U0001F4CA'} {'\u5386\u53f2\u8bb0\u5f55'}</button>
