@@ -1,6 +1,6 @@
 # 🎲 Rubik's Cube Trainer - Kanban Board
 
-## ✅ Done (35)
+## ✅ Done (36)
 
 | # | Task | Commit | Status |
 |:--|:-----|:-------|:-------|
