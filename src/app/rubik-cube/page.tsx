@@ -141,6 +141,82 @@ function parseCubeState(stateBytes: number[], scheme: Record<number, string> = D
   return f; // 54 facelets
 }
 
+
+// ── Cube Rotation Simulation ──
+// 标准布局：U(0-8) R(9-17) F(18-26) D(27-35) L(36-44) B(45-53)
+function getSolvedFacelets(scheme: Record<number, string> = DEFAULT_CUBE_COLORS): string[] {
+  const colors = [3, 1, 4, 2, 0, 5]; // U=白, R=红, F=绿, D=黄, L=橙, B=蓝
+  const facelets: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    for (let j = 0; j < 9; j++) {
+      facelets.push(scheme[colors[i]]);
+    }
+  }
+  return facelets;
+}
+
+function rotateFace(facelets: string[], face: string, clockwise = true): string[] {
+  const newFacelets = [...facelets];
+  const faceStart: Record<string, number> = { U: 0, R: 9, F: 18, D: 27, L: 36, B: 45 };
+  const start = faceStart[face];
+  const faceIndices = [start, start+1, start+2, start+5, start+8, start+7, start+6, start+3];
+  const temp = faceIndices.map(i => newFacelets[i]);
+  if (clockwise) {
+    for (let i = 0; i < 8; i++) newFacelets[faceIndices[(i+1)%8]] = temp[i];
+  } else {
+    for (let i = 7; i >= 0; i--) newFacelets[faceIndices[(i+1)%8]] = temp[i];
+  }
+  const adj: Record<string, number[][]> = {
+    U: [[45,46,47],[9,10,11],[18,19,20],[36,37,38]],
+    R: [[2,5,8],[20,23,26],[29,32,35],[47,50,53]],
+    F: [[6,7,8],[9,12,15],[2,1,0],[44,41,38]],
+    D: [[24,25,26],[15,16,17],[33,34,35],[51,52,53]],
+    L: [[0,3,6],[18,21,24],[27,30,33],[53,50,47]],
+    B: [[8,5,2],[36,39,42],[35,34,33],[17,14,11]]
+  };
+  const adjIndices = adj[face];
+  if (clockwise) {
+    const t = adjIndices[0].map(i => newFacelets[i]);
+    for (let i = 0; i < 3; i++) {
+      newFacelets[adjIndices[0][i]] = newFacelets[adjIndices[3][i]];
+      newFacelets[adjIndices[3][i]] = newFacelets[adjIndices[2][i]];
+      newFacelets[adjIndices[2][i]] = newFacelets[adjIndices[1][i]];
+      newFacelets[adjIndices[1][i]] = t[i];
+    }
+  } else {
+    const t = adjIndices[0].map(i => newFacelets[i]);
+    for (let i = 0; i < 3; i++) {
+      newFacelets[adjIndices[0][i]] = newFacelets[adjIndices[1][i]];
+      newFacelets[adjIndices[1][i]] = newFacelets[adjIndices[2][i]];
+      newFacelets[adjIndices[2][i]] = newFacelets[adjIndices[3][i]];
+      newFacelets[adjIndices[3][i]] = t[i];
+    }
+  }
+  return newFacelets;
+}
+
+function applyMove(facelets: string[], move: string): string[] {
+  const face = move[0];
+  const isPrime = move.includes("'");
+  const isDouble = move.includes("2");
+  let result = [...facelets];
+  const times = isDouble ? 2 : 1;
+  for (let i = 0; i < times; i++) {
+    result = rotateFace(result, face, !isPrime);
+  }
+  return result;
+}
+
+function applyFormulaToFacelets(facelets: string[], formula: string): string[] {
+  const moves = formula.split(/\s+/).filter(Boolean);
+  let result = [...facelets];
+  for (const move of moves) {
+    if (['M','S','E','r','l','u','d','f','b','x','y','z'].includes(move[0])) continue;
+    result = applyMove(result, move);
+  }
+  return result;
+}
+
 // ── Formula Library ──
 
 // ── Scramble Generator (WCA-style) ──
@@ -1101,6 +1177,7 @@ export default function RubikCubeTrainer() {
   const [learnMode, setLearnMode] = useState(false);
   const [learnStep, setLearnStep] = useState(0);
   const [learnPlaying, setLearnPlaying] = useState(false);
+  const [learnFacelets, setLearnFacelets] = useState<string[] | null>(null);
   const learnTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [timerMode, setTimerMode] = useState(false);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -1523,6 +1600,8 @@ export default function RubikCubeTrainer() {
     setLearnMode(true);
     setLearnStep(0);
     setLearnPlaying(false);
+    const solvedFacelets = getSolvedFacelets();
+    setLearnFacelets(solvedFacelets);
     addLog(`📖 学习模式: ${formula.id}`, 'info');
   }, [formula, addLog]);
 
@@ -1530,6 +1609,7 @@ export default function RubikCubeTrainer() {
     setLearnMode(false);
     setLearnStep(0);
     setLearnPlaying(false);
+    setLearnFacelets(null);
     if (learnTimerRef.current) clearInterval(learnTimerRef.current);
   }, []);
 
@@ -1537,24 +1617,32 @@ export default function RubikCubeTrainer() {
     if (!formula) return;
     const steps = formula.formula.split(/\s+/).filter(Boolean);
     if (learnPlaying) {
-      // Pause
       setLearnPlaying(false);
       if (learnTimerRef.current) clearInterval(learnTimerRef.current);
     } else {
-      // Play
+      if (learnStep === 0) {
+        const solvedFacelets = getSolvedFacelets();
+        setLearnFacelets(solvedFacelets);
+      }
       setLearnPlaying(true);
       learnTimerRef.current = setInterval(() => {
         setLearnStep(prev => {
-          if (prev >= steps.length - 1) {
+          const nextStep = prev + 1;
+          if (nextStep >= steps.length) {
             setLearnPlaying(false);
             if (learnTimerRef.current) clearInterval(learnTimerRef.current);
             return prev;
           }
-          return prev + 1;
+          const stepsToApply = steps.slice(0, nextStep + 1);
+          const formulaToApply = stepsToApply.join(' ');
+          const currentFacelets = getSolvedFacelets();
+          const newFacelets = applyFormulaToFacelets(currentFacelets, formulaToApply);
+          setLearnFacelets(newFacelets);
+          return nextStep;
         });
-      }, 1000); // 1 second per step
+      }, 1000);
     }
-  }, [formula, learnPlaying]);
+  }, [formula, learnPlaying, learnStep]);
 
   const resumePractice = useCallback(() => {
     setPaused(false);
@@ -1725,7 +1813,7 @@ export default function RubikCubeTrainer() {
         <div style={{ background: 'rgba(255,255,255,0.85)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, margin: '0 16px', padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
           <div style={{ width: '100%', height: 400, overflow: "hidden", position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div ref={cubeRef} style={{ width: 200, height: 200, touchAction: 'none' }}>
-              <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={180} />
+              <Cube3D rx={rx} ry={ry} facelets={(learnMode && learnFacelets) ? learnFacelets : (cubeFacelets || undefined)} size={180} />
             </div>
           </div>
           <div style={{ marginTop: 12, fontSize: 11, color: '#475569' }}>拖拽旋转魔方</div>
@@ -1917,7 +2005,7 @@ export default function RubikCubeTrainer() {
             <div style={{ background: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 16, padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, height: 400, overflow: "hidden" }}>
               <div style={{ flex: 1, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 <div ref={cubeRef} style={{ width: 240, height: 240, touchAction: 'none' }}>
-                  <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={220} />
+                  <Cube3D rx={rx} ry={ry} facelets={(learnMode && learnFacelets) ? learnFacelets : (cubeFacelets || undefined)} size={220} />
                 </div>
               </div>
               <div style={{ marginTop: 8, fontSize: 11, color: '#475569' }}>拖拽旋转魔方</div>
@@ -2216,7 +2304,7 @@ export default function RubikCubeTrainer() {
           <div style={{ fontSize: 24, fontWeight: 700, color: '#e2e8f0', marginBottom: 8 }}>{formula.id}: {formula.name}</div>
           <div style={{ fontSize: 14, color: '#94a3b8', marginBottom: 24 }}>{formula.description}</div>
           <div style={{ marginBottom: 24 }}>
-            <Cube3D rx={rx} ry={ry} facelets={cubeFacelets || undefined} size={280} />
+            <Cube3D rx={rx} ry={ry} facelets={(learnMode && learnFacelets) ? learnFacelets : (cubeFacelets || undefined)} size={280} />
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginBottom: 24, maxWidth: 600 }}>
             {formula.formula.split(/\s+/).filter(Boolean).flatMap((step): { display: string; isSkip: boolean }[] => {
