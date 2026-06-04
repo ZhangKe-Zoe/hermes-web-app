@@ -95,20 +95,48 @@ const MOVE_TABLE: Record<number, string> = {
 // Protocol: 0=orange, 1=red, 2=yellow, 3=white, 4=green, 5=blue
 // Face order: U(0-8), R(9-17), F(18-26), D(27-35), L(36-44), B(45-53)
 // Each byte: lower nibble = first facelet, upper nibble = second facelet
-const CUBE_COLORS: Record<number, string> = {
-  0: '#FF6600', // orange → L face in standard, but QiYi uses this
-  1: '#B71234', // red → R face
-  2: '#FFD500', // yellow → D face
-  3: '#FFFFFF', // white → U face
-  4: '#009B48', // green → F face
-  5: '#0046AD', // blue → B face
+const COLOR_SCHEMES: Record<string, Record<number, string>> = {
+  standard: {
+    0: '#FF6600', // orange
+    1: '#B71234', // red
+    2: '#FFD500', // yellow
+    3: '#FFFFFF', // white
+    4: '#009B48', // green
+    5: '#0046AD', // blue
+  },
+  competition: {
+    0: '#FF8C00', // bright orange
+    1: '#DC143C', // crimson
+    2: '#FFD700', // gold
+    3: '#F8F8FF', // ghost white
+    4: '#32CD32', // lime green
+    5: '#1E90FF', // dodger blue
+  },
+  pastel: {
+    0: '#FFB347', // pastel orange
+    1: '#FF6B6B', // pastel red
+    2: '#FFE66D', // pastel yellow
+    3: '#F8F9FA', // near white
+    4: '#88D8B0', // pastel green
+    5: '#6CB4EE', // pastel blue
+  },
+  neon: {
+    0: '#FF6B00', // neon orange
+    1: '#FF0055', // neon pink-red
+    2: '#FFE500', // neon yellow
+    3: '#FFFFFF', // white
+    4: '#00FF88', // neon green
+    5: '#0088FF', // neon blue
+  },
 };
 
-function parseCubeState(stateBytes: number[]): string[] {
+const DEFAULT_CUBE_COLORS = COLOR_SCHEMES.standard;
+
+function parseCubeState(stateBytes: number[], scheme: Record<number, string> = DEFAULT_CUBE_COLORS): string[] {
   const f: string[] = [];
   for (const b of stateBytes) {
-    f.push(CUBE_COLORS[b & 0x0F] || '#333');
-    f.push(CUBE_COLORS[(b >> 4) & 0x0F] || '#333');
+    f.push(scheme[b & 0x0F] || '#333');
+    f.push(scheme[(b >> 4) & 0x0F] || '#333');
   }
   return f; // 54 facelets
 }
@@ -1095,6 +1123,10 @@ export default function RubikCubeTrainer() {
     if (typeof window !== 'undefined') return localStorage.getItem('cube_theme') === 'dark';
     return false;
   });
+  const [colorScheme, setColorScheme] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('cube_color_scheme') || 'standard';
+    return 'standard';
+  });
   const [macInput, setMacInput] = useState(() => {
     if (typeof window !== "undefined") return localStorage.getItem("cube_mac") || "CC:A3:00:00:CC:3E";
     return "CC:A3:00:00:CC:3E";
@@ -1886,6 +1918,27 @@ export default function RubikCubeTrainer() {
                     <button onClick={() => { localStorage.setItem('cube_mac', macInput); addLog(`MAC saved: ${macInput}`, 'success'); }} style={{ padding: '8px 14px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: 'none', cursor: 'pointer', background: '#06b6d4', color: '#fff' }}>保存</button>
                   </div>
                   <div style={{ fontSize: 10, color: '#475569', marginTop: 4 }}>XX:XX:XX:XX:XX:XX</div>
+                </div>
+                {/* Color scheme selector */}
+                <div style={{ marginTop: 12 }}>
+                  <label style={{ fontSize: 12, color: '#94a3b8', display: 'block', marginBottom: 6 }}>配色方案</label>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {Object.keys(COLOR_SCHEMES).map(scheme => (
+                      <button key={scheme} onClick={() => {
+                        setColorScheme(scheme);
+                        localStorage.setItem('cube_color_scheme', scheme);
+                        addLog(`🎨 配色: ${scheme}`, 'success');
+                      }} style={{ padding: '6px 12px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: 'none', cursor: 'pointer', background: colorScheme === scheme ? '#06b6d4' : 'rgba(255,255,255,0.06)', color: colorScheme === scheme ? '#fff' : '#64748b' }}>
+                        {scheme === 'standard' ? '标准' : scheme === 'competition' ? '竞赛' : scheme === 'pastel' ? '柔和' : '霓虹'}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Color preview */}
+                  <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+                    {Object.values(COLOR_SCHEMES[colorScheme] || COLOR_SCHEMES.standard).map((color, i) => (
+                      <div key={i} style={{ width: 20, height: 20, borderRadius: 4, background: color, border: '1px solid rgba(0,0,0,0.2)' }} />
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
