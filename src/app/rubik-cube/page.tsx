@@ -142,109 +142,185 @@ function parseCubeState(stateBytes: number[], scheme: Record<number, string> = D
 }
 
 
-// ── Cube Rotation Simulation ──
-// 标准布局：U(0-8) R(9-17) F(18-26) D(27-35) L(36-44) B(45-53)
-function getSolvedFacelets(scheme: Record<number, string> = DEFAULT_CUBE_COLORS): string[] {
-  const colors = [3, 1, 4, 2, 0, 5]; // U=白, R=红, F=绿, D=黄, L=橙, B=蓝
-  const facelets: string[] = [];
-  for (let i = 0; i < 6; i++) {
-    for (let j = 0; j < 9; j++) {
-      facelets.push(scheme[colors[i]]);
+// ── Cube Rotation Simulation (Cubie-based) ──
+// 基于物理cubies的魔方模型，而不是基于色块
+
+// 魔方cubie类型
+interface Cubie {
+  x: number;  // -1, 0, 1
+  y: number;  // -1, 0, 1  
+  z: number;  // -1, 0, 1
+  colors: { face: string; color: string }[];  // 该cubie各面的颜色
+}
+
+// 创建已还原的魔方（26个cubies）
+function createSolvedCube(scheme: Record<number, string> = DEFAULT_CUBE_COLORS): Cubie[] {
+  const cubies: Cubie[] = [];
+  const faceColors: Record<string, number> = {
+    U: 3, D: 2, F: 4, B: 5, R: 1, L: 0  // 白、黄、绿、蓝、红、橙
+  };
+  
+  for (let x = -1; x <= 1; x++) {
+    for (let y = -1; y <= 1; y++) {
+      for (let z = -1; z <= 1; z++) {
+        // 跳过中心（不可见）
+        if (x === 0 && y === 0 && z === 0) continue;
+        
+        const colors: { face: string; color: string }[] = [];
+        
+        // 根据位置确定哪些面有颜色
+        if (y === 1) colors.push({ face: 'U', color: scheme[faceColors.U] });
+        if (y === -1) colors.push({ face: 'D', color: scheme[faceColors.D] });
+        if (z === 1) colors.push({ face: 'F', color: scheme[faceColors.F] });
+        if (z === -1) colors.push({ face: 'B', color: scheme[faceColors.B] });
+        if (x === 1) colors.push({ face: 'R', color: scheme[faceColors.R] });
+        if (x === -1) colors.push({ face: 'L', color: scheme[faceColors.L] });
+        
+        cubies.push({ x, y, z, colors });
+      }
     }
   }
+  
+  return cubies;
+}
+
+// 将cubies转换为54个facelets（用于渲染）
+function cubiesToFacelets(cubies: Cubie[]): string[] {
+  const facelets = new Array(54).fill('#333');
+  const faceOffset: Record<string, number> = { U: 0, R: 9, F: 18, D: 27, L: 36, B: 45 };
+  
+  for (const cubie of cubies) {
+    for (const { face, color } of cubie.colors) {
+      // 根据cubie位置计算在该面上的行列
+      let row = 0, col = 0;
+      switch (face) {
+        case 'U': row = 1 - cubie.z; col = cubie.x + 1; break;
+        case 'D': row = cubie.z + 1; col = cubie.x + 1; break;
+        case 'F': row = 1 - cubie.y; col = cubie.x + 1; break;
+        case 'B': row = 1 - cubie.y; col = 2 - (cubie.x + 1); break;
+        case 'R': row = 1 - cubie.y; col = 1 - (cubie.z + 1); break;
+        case 'L': row = 1 - cubie.y; col = cubie.z + 1; break;
+      }
+      const idx = faceOffset[face] + row * 3 + col;
+      facelets[idx] = color;
+    }
+  }
+  
   return facelets;
 }
 
-function rotateFace(facelets: string[], face: string, clockwise = true): string[] {
-  const f = [...facelets];
-  
-  // 面内旋转 (顺时针: 0->2->8->6->0, 1->5->7->3->1)
-  const s: Record<string, number> = { U: 0, R: 9, F: 18, D: 27, L: 36, B: 45 };
-  const o = s[face];
-  
-  // 面内8个位置的旋转
-  const facePerm = [o, o+1, o+2, o+5, o+8, o+7, o+6, o+3];
-  const temp = facePerm.map(i => f[i]);
-  for (let i = 0; i < 8; i++) {
-    f[facePerm[(i + (clockwise ? 2 : 6)) % 8]] = temp[i];
-  }
-  
-  // 相邻面的边块交换
-  // 标准魔方布局:
-  //       U(0-8)
-  // L(36-44) F(18-26) R(9-17) B(45-53)
-  //       D(27-35)
-  
-  const adj: Record<string, { src: number[][]; dst: number[][] }> = {
-    U: {
-      src: [[45,46,47], [9,10,11], [18,19,20], [36,37,38]],  // B-top, R-top, F-top, L-top
-      dst: [[9,10,11], [18,19,20], [36,37,38], [45,46,47]]   // 顺时针: B->R->F->L->B
-    },
-    D: {
-      src: [[18,25,26], [9,16,17], [45,52,53], [36,43,44]],  // F-bottom, R-bottom, B-bottom, L-bottom
-      dst: [[9,16,17], [45,52,53], [36,43,44], [18,25,26]]   // 顺时针: F->R->B->L->F
-    },
-    F: {
-      src: [[6,7,8], [9,12,15], [29,28,27], [44,41,38]],     // U-bottom, R-left, D-top(rev), L-right(rev)
-      dst: [[9,12,15], [29,28,27], [44,41,38], [6,7,8]]      // 顺时针: U->R->D->L->U
-    },
-    B: {
-      src: [[2,1,0], [36,39,42], [33,34,35], [17,14,11]],    // U-top(rev), L-left, D-bottom, R-right(rev)
-      dst: [[36,39,42], [33,34,35], [17,14,11], [2,1,0]]     // 顺时针: U->L->D->R->U
-    },
-    R: {
-      src: [[2,5,8], [18,21,24], [29,32,35], [47,50,53]],    // U-right, F-right, D-right, B-left(rev)
-      dst: [[18,21,24], [29,32,35], [47,50,53], [2,5,8]]     // 顺时针: U->F->D->B->U
-    },
-    L: {
-      src: [[0,3,6], [45,48,51], [27,30,33], [20,23,26]],    // U-left, B-right(rev), D-left, F-left
-      dst: [[45,48,51], [27,30,33], [20,23,26], [0,3,6]]     // 顺时针: U->B->D->F->U
-    }
-  };
-  
-  const { src, dst } = adj[face];
-  if (clockwise) {
-    const temp = src[0].map(i => f[i]);
-    for (let i = 0; i < 3; i++) {
-      f[dst[0][i]] = f[src[3][i]];
-      f[dst[1][i]] = f[src[0][i]];
-      f[dst[2][i]] = f[src[1][i]];
-      f[dst[3][i]] = f[src[2][i]];
-    }
-  } else {
-    const temp = src[0].map(i => f[i]);
-    for (let i = 0; i < 3; i++) {
-      f[dst[0][i]] = f[src[1][i]];
-      f[dst[1][i]] = f[src[2][i]];
-      f[dst[2][i]] = f[src[3][i]];
-      f[dst[3][i]] = f[src[0][i]];
-    }
-  }
-  
-  return f;
+// 获取已还原魔方的facelets
+function getSolvedFacelets(scheme: Record<number, string> = DEFAULT_CUBE_COLORS): string[] {
+  return cubiesToFacelets(createSolvedCube(scheme));
 }
 
-function applyMove(facelets: string[], move: string): string[] {
+// 旋转单个坐标轴
+function rotateCoord(value: [number, number, number], axis: string, clockwise: boolean): [number, number, number] {
+  let [x, y, z] = value;
+  
+  switch (axis) {
+    case 'x': // 绕X轴旋转
+      if (clockwise) { const t = y; y = -z; z = t; }
+      else { const t = y; y = z; z = -t; }
+      break;
+    case 'y': // 绕Y轴旋转
+      if (clockwise) { const t = x; x = z; z = -t; }
+      else { const t = x; x = -z; z = t; }
+      break;
+    case 'z': // 绕Z轴旋转
+      if (clockwise) { const t = x; x = -y; y = t; }
+      else { const t = x; x = y; y = -t; }
+      break;
+  }
+  
+  return [x, y, z];
+}
+
+// 旋转cubie的颜色方向
+function rotateCubieColors(colors: { face: string; color: string }[], axis: string, clockwise: boolean): { face: string; color: string }[] {
+  const faceMap: Record<string, Record<string, string>> = {
+    x: { U: 'F', F: 'D', D: 'B', B: 'U', R: 'R', L: 'L' },
+    y: { U: 'U', D: 'D', F: 'R', R: 'B', B: 'L', L: 'F' },
+    z: { U: 'L', L: 'D', D: 'R', R: 'U', F: 'F', B: 'B' }
+  };
+  
+  const reverseMap: Record<string, Record<string, string>> = {};
+  for (const axis of Object.keys(faceMap)) {
+    reverseMap[axis] = {};
+    for (const [from, to] of Object.entries(faceMap[axis])) {
+      reverseMap[axis][to] = from;
+    }
+  }
+  
+  return colors.map(({ face, color }) => {
+    const newFace = clockwise ? faceMap[axis][face] : reverseMap[axis][face];
+    return { face: newFace || face, color };
+  });
+}
+
+// 旋转魔方的一层
+function rotateLayer(cubies: Cubie[], layer: string, clockwise: boolean): Cubie[] {
+  return cubies.map(cubie => {
+    let shouldRotate = false;
+    
+    // 判断cubie是否在旋转层
+    switch (layer) {
+      case 'U': shouldRotate = cubie.y === 1; break;
+      case 'D': shouldRotate = cubie.y === -1; break;
+      case 'F': shouldRotate = cubie.z === 1; break;
+      case 'B': shouldRotate = cubie.z === -1; break;
+      case 'R': shouldRotate = cubie.x === 1; break;
+      case 'L': shouldRotate = cubie.x === -1; break;
+    }
+    
+    if (!shouldRotate) return cubie;
+    
+    // 旋转位置
+    let axis = 'y';
+    switch (layer) {
+      case 'U': case 'D': axis = 'y'; break;
+      case 'F': case 'B': axis = 'z'; break;
+      case 'R': case 'L': axis = 'x'; break;
+    }
+    
+    const [newX, newY, newZ] = rotateCoord([cubie.x, cubie.y, cubie.z], axis, clockwise);
+    const newColors = rotateCubieColors(cubie.colors, axis, clockwise);
+    
+    return { x: newX, y: newY, z: newZ, colors: newColors };
+  });
+}
+
+// 应用单个移动
+function applyMove(cubies: Cubie[], move: string): Cubie[] {
   const face = move[0];
   const isPrime = move.includes("'");
   const isDouble = move.includes("2");
-  let result = [...facelets];
+  
+  let result = [...cubies];
   const times = isDouble ? 2 : 1;
+  
   for (let i = 0; i < times; i++) {
-    result = rotateFace(result, face, !isPrime);
+    result = rotateLayer(result, face, !isPrime);
   }
+  
   return result;
 }
 
+// 应用公式
 function applyFormulaToFacelets(facelets: string[], formula: string): string[] {
+  let cubies = createSolvedCube();
   const moves = formula.split(/\s+/).filter(Boolean);
-  let result = [...facelets];
+  
   for (const move of moves) {
     if (['M','S','E','r','l','u','d','f','b','x','y','z'].includes(move[0])) continue;
-    result = applyMove(result, move);
+    cubies = applyMove(cubies, move);
   }
-  return result;
+  
+  return cubiesToFacelets(cubies);
 }
+
+
+
 
 // ── Formula Library ──
 
