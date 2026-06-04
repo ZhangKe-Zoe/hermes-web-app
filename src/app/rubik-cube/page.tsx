@@ -145,65 +145,74 @@ function parseCubeState(stateBytes: number[], scheme: Record<number, string> = D
 // ── Cube State Simulation (using rubiks-cube library) ──
 import Cube from 'rubiks-cube';
 
-// Corner cubies: [URF, URB, ULB, ULF, DRF, DRB, DLB, DLF]
-// Each has 3 facelets in order: U/D face, then clockwise when looking at corner
+// Corner numbering (determined by move analysis):
+// 0=ULB, 1=URB, 2=URF, 3=ULF, 4=DLF, 5=DRF, 6=DRB, 7=DLB
+// Canonical face order for each corner = CW cycle looking from outside:
+// URF: U→R→F, URB: U→B→R, ULB: U→L→B, ULF: U→F→L
+// DRF: D→F→R, DRB: D→R→B, DLB: D→B→L, DLF: D→L→F
+
+// Face layout: U(0-8) R(9-17) F(18-26) D(27-35) L(36-44) B(45-53)
 const CORNER_FACELETS: [number, number, number][] = [
-  [ 8,  9, 20], // 0=URF: U8, R0, F2
-  [ 2, 47, 11], // 1=URB: U2, B2, R2
-  [ 0, 38, 45], // 2=ULB: U0, L2, B0
-  [ 6, 36, 18], // 3=ULF: U6, L0, F0
-  [29, 15, 26], // 4=DRF: D2, R6, F8
-  [35, 53, 17], // 5=DRB: D8, B8, R8
-  [33, 44, 51], // 6=DLB: D6, L6, B6
-  [27, 24, 42], // 7=DLF: D0, F6, L8
+  [ 0, 38, 45], // 0=ULB: U0, L2, B0  [U,L,B]
+  [ 2, 47, 11], // 1=URB: U2, B2, R2  [U,B,R]
+  [ 8,  9, 20], // 2=URF: U8, R0, F2  [U,R,F]
+  [ 6, 18, 36], // 3=ULF: U6, F0, L0  [U,F,L]
+  [27, 42, 24], // 4=DLF: D0, L8, F6  [D,L,F]
+  [29, 26, 15], // 5=DRF: D2, F8, R6  [D,F,R]
+  [35, 17, 53], // 6=DRB: D8, R8, B8  [D,R,B]
+  [33, 51, 44], // 7=DLB: D6, B6, L6  [D,B,L]
 ];
 
-// Edge cubies: [UF, UL, UB, UR, FL, FR, BL, BR, DF, DL, DB, DR]
+// Edge numbering: 0=UB, 1=UR, 2=UF, 3=UL, 4=BL, 5=FR, 6=FL, 7=BR, 8=DF, 9=DR, 10=DB, 11=DL
 const EDGE_FACELETS: [number, number][] = [
-  [ 7, 19], // 0=UF:  U7, F1
-  [ 3, 37], // 1=UL:  U3, L1
-  [ 1, 46], // 2=UB:  U1, B7
-  [ 5, 10], // 3=UR:  U5, R1
-  [21, 39], // 4=FL:  F3, L3
-  [23, 12], // 5=FR:  F5, R3
-  [48, 41], // 6=BL:  B3, L5
-  [50, 16], // 7=BR:  B5, R5
+  [ 1, 46], // 0=UB:  U1, B7
+  [ 5, 10], // 1=UR:  U5, R1
+  [ 7, 19], // 2=UF:  U7, F1
+  [ 3, 37], // 3=UL:  U3, L1
+  [48, 41], // 4=BL:  B3, L5
+  [21, 39], // 5=FL:  F5, R3
+  [23, 12], // 6=FR:  F3, L3
+  [50, 14], // 7=BR:  B5, R5
   [28, 25], // 8=DF:  D1, F7
-  [30, 43], // 9=DL:  D3, L7
+  [32, 16], // 9=DR:  D7, R7
   [34, 52], // 10=DB: D5, B1
-  [32, 14], // 11=DR: D7, R7
+  [30, 43], // 11=DL: D3, L7
 ];
 
-// Center facelets: U, L, F, R, B, D
-const CENTER_FACELETS = [4, 40, 22, 13, 49, 31];
+const CENTER_FACELETS: [number, number][] = [
+  [4, 3],   // U center: facelet 4, white(3)
+  [40, 0],  // L center: facelet 40, orange(0)
+  [22, 4],  // F center: facelet 22, green(4)
+  [13, 1],  // R center: facelet 13, red(1)
+  [49, 5],  // B center: facelet 49, blue(5)
+  [31, 2],  // D center: facelet 31, yellow(2)
+];
 
-// Convert rubiks-cube state to 54 facelets
 function cubeToFacelets(cube: { cp: number[]; co: number[]; ep: number[]; eo: number[]; c: number[] }, scheme: Record<number, string> = DEFAULT_CUBE_COLORS): string[] {
   const facelets = new Array(54).fill('#333');
+  const getColorIdx = (idx: number): number => {
+    if (idx < 9) return 3;       // U facelets → white(3)
+    if (idx < 18) return 1;      // R facelets → red(1)
+    if (idx < 27) return 4;      // F facelets → green(4)
+    if (idx < 36) return 2;      // D facelets → yellow(2)
+    if (idx < 45) return 0;      // L facelets → orange(0)
+    return 5;                     // B facelets → blue(5)
+  };
 
   // Corner facelets
   for (let i = 0; i < 8; i++) {
     const cp = cube.cp[i];
     const co = cube.co[i];
     const [f0, f1, f2] = CORNER_FACELETS[i];
-    // Get the color indices for the source corner's 3 faces
     const [s0, s1, s2] = CORNER_FACELETS[cp];
-    const getColorIdx = (idx: number): number => {
-      if (idx < 9) return 0;       // U=white
-      if (idx < 18) return 3;      // R=red
-      if (idx < 27) return 2;      // F=green
-      if (idx < 36) return 5;      // D=yellow
-      if (idx < 45) return 1;      // L=orange
-      return 4;                     // B=blue
-    };
-    const c0 = getColorIdx(s0), c1 = getColorIdx(s1), c2 = getColorIdx(s2);
-    // Apply orientation: co=0 no change, co=1 shift right, co=2 shift left
+    const c = [getColorIdx(s0), getColorIdx(s1), getColorIdx(s2)];
+    // co=0: direct, co=1: shift left (c2,c0,c1), co=2: shift right (c1,c2,c0)
     if (co === 0) {
-      facelets[f0] = scheme[c0]; facelets[f1] = scheme[c1]; facelets[f2] = scheme[c2];
+      facelets[f0] = scheme[c[0]]; facelets[f1] = scheme[c[1]]; facelets[f2] = scheme[c[2]];
     } else if (co === 1) {
-      facelets[f0] = scheme[c2]; facelets[f1] = scheme[c0]; facelets[f2] = scheme[c1];
+      facelets[f0] = scheme[c[2]]; facelets[f1] = scheme[c[0]]; facelets[f2] = scheme[c[1]];
     } else {
-      facelets[f0] = scheme[c1]; facelets[f1] = scheme[c2]; facelets[f2] = scheme[c0];
+      facelets[f0] = scheme[c[1]]; facelets[f1] = scheme[c[2]]; facelets[f2] = scheme[c[0]];
     }
   }
 
@@ -213,25 +222,18 @@ function cubeToFacelets(cube: { cp: number[]; co: number[]; ep: number[]; eo: nu
     const eo = cube.eo[i];
     const [f0, f1] = EDGE_FACELETS[i];
     const [s0, s1] = EDGE_FACELETS[ep];
-    const getColorIdx = (idx: number): number => {
-      if (idx < 9) return 0;
-      if (idx < 18) return 3;
-      if (idx < 27) return 2;
-      if (idx < 36) return 5;
-      if (idx < 45) return 1;
-      return 4;
-    };
-    const c0 = getColorIdx(s0), c1 = getColorIdx(s1);
+    const c = [getColorIdx(s0), getColorIdx(s1)];
     if (eo === 0) {
-      facelets[f0] = scheme[c0]; facelets[f1] = scheme[c1];
+      facelets[f0] = scheme[c[0]]; facelets[f1] = scheme[c[1]];
     } else {
-      facelets[f0] = scheme[c1]; facelets[f1] = scheme[c0];
+      facelets[f0] = scheme[c[1]]; facelets[f1] = scheme[c[0]];
     }
   }
 
   // Center facelets
   for (let i = 0; i < 6; i++) {
-    facelets[CENTER_FACELETS[i]] = scheme[i];
+    const [faceletIdx, colorIdx] = CENTER_FACELETS[i];
+    facelets[faceletIdx] = scheme[colorIdx];
   }
 
   return facelets;
